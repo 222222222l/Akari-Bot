@@ -29,6 +29,9 @@ for key, label, desc, icon, group in FEATURES:
     field(key, label, 'bool', True, group, help=desc)
     FIELDS[-1]['feature'] = icon
 
+field('searxng_url', 'SearXNG 服务地址', 'str', 'http://127.0.0.1:8888', 'chat', 1, 500, '优先调用此服务的 JSON 搜索 API，失败或无结果时依次使用 DuckDuckGo、Bing。')
+field('search_timeout', '搜索单个后端超时（秒）', 'int', 10, 'chat', 1, 30)
+
 field('bot_name', '显示名称', 'str', '赤座灯里', 'chat', 1, 40)
 field('model', '对话模型', 'str', 'Qwen3.8-27B', 'chat', 1, 160, '使用当前 LLM 服务已加载的模型名称。')
 field('group_reply_mode', '群聊回复模式', 'select', 'all', 'chat', options=[['all', '参与所有群消息'], ['at_only', '仅被 @ 时回复'], ['at_or_keyword', '@ 或关键词触发']])

@@ -80,5 +80,7 @@
   "agent_model": "YOUR_MODEL_NAME",
   "music_auto_route": true,
   "role_task_dispatch": true,
-  "role_task_results": true
+  "role_task_results": true,
+  "searxng_url": "http://127.0.0.1:8888",
+  "search_timeout": 10
 }

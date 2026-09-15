@@ -464,6 +464,8 @@ def call_llm(messages, tools=None, *, timeout=None, attempts=2):
             'temperature': float(CFG.get('temperature', 0.85)),
             'top_p': float(CFG.get('top_p', 0.95)),
             'max_tokens': int(CFG.get('max_tokens', 420))}
+    if any(m.get('role')=='tool' for m in messages):
+        body['max_tokens']=max(1600,body['max_tokens'])
     if tools:
         body.update(tools=tools, tool_choice='auto', max_tokens=max(1200, body['max_tokens']))
     url = CFG['llm_base'].rstrip('/') + '/v1/chat/completions'
@@ -479,6 +481,12 @@ def call_llm(messages, tools=None, *, timeout=None, attempts=2):
                 content = re.sub(r'<think.*?>.*?</think.*?>', '', content, flags=re.S).strip()
                 if content:
                     return content
+                finish=d['choices'][0].get('finish_reason','')
+                log('llm empty output finish=%s max_tokens=%s reasoning_chars=%d' %
+                    (finish,body['max_tokens'],len(message.get('reasoning_content') or '')))
+                if finish=='length' and attempt<attempts:
+                    body['max_tokens']=max(body['max_tokens'],min(4096,max(1600,body['max_tokens']*2)))
+                    continue
             log('llm attempt=%d http=%s resp=%s' % (attempt, st, json.dumps(d, ensure_ascii=False)[:200]))
         except Exception as e:
             log('llm attempt=%d error=%r' % (attempt, e))
@@ -707,7 +715,7 @@ def handle_event(ev):
         _q = _m.group(1).strip()[:120]
         log('search requested: ' + _q)
         try:
-            _items = akari_web.search(_q, int(CFG.get('search_results', 5)), log)
+            _items = akari_web.search(_q, int(CFG.get('search_results', 5)), log, cfg=CFG)
         except Exception as _e:
             log('search error %r' % (_e,))
             _items = []

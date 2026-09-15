@@ -132,6 +132,17 @@ class BotIntegrationTests(unittest.TestCase):
         self.assertEqual(len(payloads),1);self.assertEqual(payloads[0]['kind'],'text')
         self.assertIn('python.org',payloads[0]['text'])
 
+    def test_empty_reasoning_output_gets_larger_bounded_retry(self):
+        key=Path(self.tmp.name)/'key';key.write_text('test-only');self.bot.CFG['llm_key_file']=str(key)
+        budgets=[]
+        def http(url,method,headers,body,**kw):
+            budgets.append(body['max_tokens'])
+            if len(budgets)==1:return 200,{'choices':[{'finish_reason':'length','message':{'content':'','reasoning_content':'reasoning'}}]}
+            return 200,{'choices':[{'finish_reason':'stop','message':{'content':'查到了'}}]}
+        self.bot.http_json=http
+        self.assertEqual(self.bot.call_llm([{'role':'user','content':'test'}]),'查到了')
+        self.assertEqual(budgets,[420,1600])
+
     def test_gateway_message_key_uses_stable_message_identity(self):
         payload = {'t':'C2C_MESSAGE_CREATE', 'd':{'id':'same-message','author':{'user_openid':'owner'}}}
         a, b = self.bot.build_event(payload), self.bot.build_event(dict(payload, id='delivery-attempt-2'))

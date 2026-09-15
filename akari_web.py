@@ -1,5 +1,6 @@
 # akari_web.py - 搜索 + QQ发图助手（放在 akari_bot.py 同目录）
 import base64
+from html.parser import HTMLParser
 import gzip
 import io
 import json
@@ -38,48 +39,99 @@ def strip_tags(html):
     return re.sub(r'\s+', ' ', html).strip()
 
 
-def fetch_page(url, limit=2400):
+def fetch_page(url, limit=2400, timeout=8):
     try:
-        html = _fetch(url, timeout=18)
+        html = _fetch(url, timeout=timeout)
     except Exception:
         return ''
     m = re.search(r'(?is)<body.*?>(.*)</body>', html)
     return strip_tags(m.group(1) if m else html)[:limit]
 
 
-def search(query, limit=5, logger=None):
+class SearchLinks(HTMLParser):
+    def __init__(self, engine):
+        super().__init__(convert_charrefs=True)
+        self.engine=engine;self.heading=0;self.link=None;self.items=[]
+    def handle_starttag(self,tag,attrs):
+        attrs=dict(attrs)
+        if tag=='h2':self.heading+=1
+        if tag=='a' and ((self.engine=='ddg' and 'result__a' in attrs.get('class','').split()) or (self.engine=='bing' and self.heading)):
+            self.link=[attrs.get('href',''),[]]
+    def handle_data(self,data):
+        if self.link is not None:self.link[1].append(data)
+    def handle_endtag(self,tag):
+        if tag=='a' and self.link is not None:
+            url,text=self.link;self.link=None
+            title=' '.join(''.join(text).split())
+            if self.engine=='ddg':
+                url=urllib.parse.urljoin('https://duckduckgo.com/',url)
+                url=urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get('uddg',[url])[0]
+            elif urllib.parse.urlsplit(url).hostname in ('www.bing.com','bing.com'):
+                encoded=urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get('u',[''])[0]
+                if encoded.startswith('a1'):
+                    try:url=base64.urlsafe_b64decode(encoded[2:]+'='*((-len(encoded[2:]))%4)).decode()
+                    except (ValueError,UnicodeError):pass
+            if title and url.startswith(('https://','http://')):
+                self.items.append(dict(title=title[:160],url=url[:2048],snippet=''))
+        if tag=='h2':self.heading=max(0,self.heading-1)
+
+
+def parse_search(html,engine):
+    parser=SearchLinks(engine);parser.feed(html)
+    return parser.items
+
+
+def search(query, limit=5, logger=None, cfg=None):
+    cfg = cfg or {}
+    limit = min(10, max(1, int(limit)))
+    timeout = min(30, max(1, int(cfg.get('search_timeout', 10))))
     out = []
-    q = urllib.parse.quote(query)
-    try:
-        html = _fetch('https://html.duckduckgo.com/html/?q=' + q)
-        hrefs = re.findall(r'class="result__a"[^>]*href="([^"]+)"', html)[:limit]
-        titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', html)[:limit]
-        snips = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html)[:limit]
-        for i in range(len(hrefs)):
-            u = hrefs[i]
-            if 'uddg=' in u:
-                u = urllib.parse.unquote(u.split('uddg=')[1].split('&')[0])
-            out.append({'title': strip_tags(titles[i])[:120] if i < len(titles) else '',
-                        'url': u[:160],
-                        'snippet': strip_tags(snips[i])[:260] if i < len(snips) else ''})
-    except Exception as e:
-        if logger:
-            logger('search ddg failed %r' % (e,))
-    if not out:
+    endpoint = str(cfg.get('searxng_url', '')).strip().rstrip('/')
+    if endpoint:
         try:
-            html = _fetch('https://www.bing.com/search?q=' + q + '&setlang=zh-hans')
-            for href, title in re.findall(
-                    r'(?is)<h2><a[^>]*href="([^"]+)"[^>]*>(.*?)</a></h2>', html)[:limit]:
-                out.append({'title': strip_tags(title)[:120],
-                            'url': href[:160], 'snippet': ''})
-        except Exception as e:
+            if urllib.parse.urlsplit(endpoint).scheme not in ('http', 'https'):
+                raise ValueError('SearXNG URL must use HTTP or HTTPS')
+            payload = json.loads(_fetch(endpoint + '/search?' + urllib.parse.urlencode(
+                {'q': query, 'format': 'json'}), timeout=timeout))
+            seen = set()
+            for item in payload.get('results', []):
+                if not isinstance(item, dict):
+                    continue
+                url, title = str(item.get('url') or ''), str(item.get('title') or '')
+                if not title or not url.startswith(('https://', 'http://')) or url in seen:
+                    continue
+                seen.add(url)
+                out.append(dict(title=strip_tags(title)[:160], url=url[:2048],
+                                snippet=strip_tags(str(item.get('content') or ''))[:1200]))
+                if len(out) >= limit:
+                    break
             if logger:
-                logger('search bing failed %r' % (e,))
-    out = [x for x in out if x.get('title')]
-    for x in out[:2]:
-        body = fetch_page(x['url']) if x.get('url', '').startswith('http') else ''
-        if body:
-            x['page'] = body
+                logger('search engine=searxng results=%d unavailable=%s' %
+                       (len(out), str(payload.get('unresponsive_engines', []))[:500]))
+        except Exception as exc:
+            if logger:
+                logger('search engine=searxng failed=%s' % type(exc).__name__)
+    q = urllib.parse.quote(query)
+    for engine, base in [('ddg', 'https://html.duckduckgo.com/html/?q='),
+                         ('bing', 'https://www.bing.com/search?q=')]:
+        if out:
+            break
+        try:
+            html = _fetch(base + q, timeout=timeout)
+            out = parse_search(html, engine)[:limit]
+            if logger:
+                challenge = any(word in html.lower() for word in
+                                ('anomaly.js', 'verify you are human', 'captcha'))
+                logger('search engine=%s results=%d challenge=%s' % (engine, len(out), challenge))
+        except Exception as exc:
+            if logger:
+                logger('search engine=%s failed=%s' % (engine, type(exc).__name__))
+            out = []
+    for item in out[:2]:
+        if not item.get('snippet'):
+            body = fetch_page(item['url'], timeout=min(timeout, 8))
+            if body:
+                item['page'] = body
     return out
 
 

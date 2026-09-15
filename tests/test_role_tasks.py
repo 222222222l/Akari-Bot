@@ -108,6 +108,13 @@ class RoleTests(unittest.TestCase):
             text,job=role.respond([],self.ev,self.cmd,Mock(side_effect=[{'tool_calls':[task]},{'tool_calls':[search]},'查到了，天气晴朗。']))
         self.assertEqual(text,'查到了，天气晴朗。');self.assertIsNone(job);self.assertEqual(self.db.list(),[])
 
+    def test_search_results_survive_empty_final_model_reply(self):
+        call=dict(id='s',function=dict(name='akari_search',arguments=json.dumps(dict(query='新番'))))
+        with patch('akari_role_tasks.akari_web.search',return_value=[dict(title='播出表',url='https://example.com/schedule')]):
+            text,job=role.respond([],self.ev,self.cmd,Mock(side_effect=[{'tool_calls':[call]},'']))
+        self.assertIn('https://example.com/schedule',text);self.assertNotIn('没有获得',text)
+        self.assertIsNone(job)
+
     def test_routing_preserves_fast_controls_and_chat_escape(self):
         for text in ('/任务 分析文件','/音乐 写首歌','/翻唱 恋爱循环','就按刚才说的做'):
             self.assertTrue(role.route(dict(self.ev,content=text),self.cmd),text)
