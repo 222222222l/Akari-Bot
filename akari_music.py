@@ -102,7 +102,7 @@ def handle(commands, ev, rest, natural=False):
     structured = any(flag in rest.split('\n',1)[0] for flag in ('/重编曲','/原创','/片段','/风格'))
     # Free-form requests go to the actual Pi agent, which has the native music tool.
     agent = natural or command in ('/音乐','/作曲','/生成音乐') or (
-        command in ('/唱歌','/sing') and rest and not structured and not ev.get('attachments'))
+        (command in ('/唱歌','/sing') or (command == '/翻唱' and is_request(rest))) and rest and not structured and not ev.get('attachments'))
     if agent:
         prompt = ('请实际完成以下音乐需求，使用原生 akari_music 工具自行规划并执行。'
                   '原创自动填写原创歌词与风格；翻唱自动核对歌曲并搜索/下载公开音源。'

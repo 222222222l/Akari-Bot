@@ -102,6 +102,10 @@ for key, label, default, lo, hi in [
     field(key, label, 'int', default, 'connection', lo, hi)
 field('wire_dump', '网关调试日志', 'bool', False, 'connection', help='记录网关事件类型与长度，日志量会增加。')
 field('dry_run', '演练模式', 'bool', False, 'connection', help='用于调试；开启后部分发送与任务执行会被跳过。')
+
+field('role_task_dispatch', '角色理解与任务派发', 'bool', True, 'agent', help='先由灯里理解请求并用角色语气接待，再调用任务工具执行；进度和取消指令仍直接处理。')
+field('role_task_results', '角色简洁结果回复', 'bool', True, 'agent', help='完成后由灯里简洁说明关键结果，完整报告留在任务中；减少自动进度和重复格式附件。')
+
 INDEX = {(f['scope'], f['key']): f for f in FIELDS}
 
 

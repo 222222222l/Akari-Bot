@@ -78,5 +78,7 @@
   "comfy_output_dir": "comfy-output",
   "agent_provider": "YOUR_PI_PROVIDER",
   "agent_model": "YOUR_MODEL_NAME",
-  "music_auto_route": true
+  "music_auto_route": true,
+  "role_task_dispatch": true,
+  "role_task_results": true
 }

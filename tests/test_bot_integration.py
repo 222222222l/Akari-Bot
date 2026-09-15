@@ -20,7 +20,7 @@ class BotIntegrationTests(unittest.TestCase):
                    llm_base='https://model.invalid', agent_allowed_openids=['owner'],
                    dry_run=False, agent_workdir=str(root), sticker_enabled=False,
                    image_enabled=False, video_enabled=False, voice_enabled=False,
-                   group_reply_mode='all', agent_enabled=True)
+                   group_reply_mode='all', agent_enabled=True, role_task_dispatch=False)
         (root / 'config.json').write_text(json.dumps(cfg))
         (root / 'persona.txt').write_text('test')
         with patch.dict(os.environ, {'AKARI_BASE': str(root)}):
@@ -75,6 +75,36 @@ class BotIntegrationTests(unittest.TestCase):
         self.bot.dispatch_event(self.ev('/聊 今天怎么样', 'chat'), q)
         self.assertEqual(q.get_nowait()['content'], '今天怎么样')
         self.assertEqual(self.bot.TASK_STORE.list(), [])
+
+    def test_role_dispatch_reaches_chat_then_actual_queue_and_role_ack(self):
+        self.bot.CFG['role_task_dispatch']=True
+        ev=self.ev('/任务 写一个报告\n@input.txt','role-submit')
+        q=queue.Queue();self.bot.dispatch_event(ev,q)
+        self.assertEqual(self.bot.TASK_STORE.list(),[])
+        self.assertEqual(q.qsize(),1)
+        calls=[]
+        def model(messages,tools=None):
+            calls.append(messages)
+            if len(calls)==1:
+                return dict(tool_calls=[dict(id='call',type='function',function=dict(name='akari_task',arguments=json.dumps(dict(action='submit',kind='task',request='整理报告，读取 @input.txt'))))])
+            return '嗯！灯里来帮你整理，做好就给你看哦。'
+        self.bot.call_llm=model
+        self.bot.handle_event(q.get_nowait())
+        job=self.bot.TASK_STORE.list()[0]
+        self.assertIn('@input.txt',job['prompt'])
+        with self.bot.TASK_STORE.connect() as db:
+            rows=db.execute('SELECT payload FROM outbox WHERE job_id=?',(job['id'],)).fetchall()
+        self.assertEqual(len(rows),1)
+        self.assertIn('灯里',json.loads(rows[0][0])['text'])
+        self.assertEqual(calls[1][-1]['role'],'tool')
+
+    def test_role_dispatch_does_not_delay_control_commands(self):
+        self.bot.CFG['role_task_dispatch']=True
+        q=queue.Queue();self.bot.dispatch_event(self.ev('/任务 do it','newtask'),q)
+        self.bot.dispatch_event(self.ev('/进度','status'),q)
+        self.assertEqual(q.qsize(),1)
+        with self.bot.TASK_STORE.connect() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0],1)
 
     def test_gateway_message_key_uses_stable_message_identity(self):
         payload = {'t':'C2C_MESSAGE_CREATE', 'd':{'id':'same-message','author':{'user_openid':'owner'}}}

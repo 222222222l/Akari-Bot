@@ -67,3 +67,5 @@ sudo systemctl status akari-admin.service
 管理接口具备会话鉴权、登录限速、HttpOnly/SameSite cookie、CSRF、Origin/Host 校验与静态文件白名单；不提供任意 shell 执行入口。
 
 音乐参数包括默认参考音频路径、人声提取、参考片段时长、自动搜索下载、下载超时和源时长限制；Bot 参数包含自然语言音乐请求路由。详见 [音乐文档](singing.md)。
+
+任务参数新增“角色理解与任务派发”和“角色简洁结果回复”：分别控制自然语言接单和完成通知润色。保存后重启生效。

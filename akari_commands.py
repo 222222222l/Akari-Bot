@@ -85,7 +85,7 @@ class Commands:
     def reply(self, ev, text, job=None):
         self.store.enqueue(ev, {'kind': 'text', 'text': text}, job['id'] if job else None)
 
-    def submit(self, ev, prompt, parent=None, operation=None):
+    def submit(self, ev, prompt, parent=None, operation=None, ack=True):
         prompt, timeout = timeout_of(prompt, self.cfg)
         if not prompt and ev.get('attachments'):
             prompt = '请查看本条消息的附件，说明内容和可进行的处理。'
@@ -99,8 +99,10 @@ class Commands:
             return
         job = self.store.submit(ev, prompt, timeout, self.cfg.get('agent_workdir', str(Path.home() / 'pi-tasks')),
                                 parent=parent, max_queued=int(self.cfg.get('agent_queue_limit', 30)), operation=operation)
-        self.store.enqueue(ev, dict(kind='text', text='收到，任务 %s 已登记（最多 %d 分钟）。\n/进度 %s 查询；/取消 %s 停止。' %
-                           (job['id'], (timeout + 59) // 60, job['id'], job['id'])), job['id'], job['id'] + ':ack')
+        if ack:
+            self.store.enqueue(ev, dict(kind='text', text='收到，任务 %s 已登记（最多 %d 分钟）。\n/进度 %s 查询；/取消 %s 停止。' %
+                               (job['id'], (timeout + 59) // 60, job['id'], job['id'])), job['id'], job['id'] + ':ack')
+        return job
 
     def handle(self, ev):
         text = task_text(ev.get('content', ''))

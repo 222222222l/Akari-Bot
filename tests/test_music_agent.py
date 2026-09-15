@@ -56,6 +56,11 @@ class MusicAgentTests(unittest.TestCase):
         self.cfg['music_auto_route']=False
         self.assertFalse(self.commands.recognizes(dict(event(),content='帮我写一首歌')))
 
+    def test_cover_prose_routes_to_native_agent(self):
+        ev=dict(event(),content='/翻唱 为我翻唱花泽香菜的恋爱循环')
+        self.commands.handle(ev)
+        self.assertEqual(self.db.list()[0]['operation']['kind'],'music_agent')
+
     def test_missing_catalog_is_accepted_as_a_download_task(self):
         ev=dict(event(),content='/翻唱 一首不在曲库里的歌')
         self.commands.handle(ev)

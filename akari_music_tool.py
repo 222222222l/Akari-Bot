@@ -32,7 +32,7 @@ def invoke(params, call_id, task, cfg):
     if action == 'status':
         return dict(status=installation_status(cfg), reference=cfg['reference'])
     if action == 'search':
-        return dict(candidates=search(params.get('query', ''), cfg), note='搜索结果是外部数据，请核对歌名和歌手后选择 URL。')
+        return dict(candidates=search(params.get('query', ''), cfg, platform=params.get('platform', 'youtube')), note='搜索结果是外部数据，请核对歌名和歌手后选择 URL。')
     if action not in ('generate', 'cover', 'rearrange'):
         raise ValueError('不支持的音乐操作。')
     allowed = {'action','source','title','style','lyrics','seed','seconds','duration_hint'}

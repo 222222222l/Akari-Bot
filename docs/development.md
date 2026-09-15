@@ -57,3 +57,5 @@ npm run test:browser
 ## 本次发布验证
 
 2026-09-15，在未复制生产配置的独立检出中完成：103 项 Python 测试、6 项 Node 测试和 11 个 Chromium 交互流程通过；生成的 systemd 单元通过 `systemd-analyze verify`。这不包含 QQ 实际发送与新的 GPU 模型推理验证。
+
+角色真实模型验证（显式联网到所配置模型，不发送 QQ 消息）：`python3 tests/role_local.py`。使用隔离任务库验证闲聊/执行意图、上下文指代，并只执行一个生成 `42` 文本文件的任务，检查角色结果回复。

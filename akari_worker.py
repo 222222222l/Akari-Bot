@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import akari_role_results
 import re
 import signal
 import subprocess
@@ -220,7 +221,7 @@ class TaskService:
                 artifacts = self.artifacts(job)
                 self.store.update(job['id'], progress=progress, artifacts=artifacts)
                 for artifact in artifacts:
-                    if artifact['path'] == event.get('path'):
+                    if artifact['path'] == event.get('path') and not self.cfg.get('role_task_results', False):
                         ev = self.store.session(job['scope']).get('event') or job['event']
                         self.store.enqueue(ev, dict(kind='media', **artifact), job['id'], artifact_key(job, artifact['path']))
 
@@ -326,7 +327,7 @@ class TaskService:
                     if delta and delta != last_partial and elapsed - last_persist >= 1:
                         atomic_text(directory / 'partial.txt', delta)
                         last_partial, last_persist = delta, elapsed
-                    if next_notice > 0 and elapsed >= next_notice and not notice_sent:
+                    if next_notice > 0 and elapsed >= next_notice and not notice_sent and not self.cfg.get('role_task_results', False):
                         self.store.enqueue(job['event'], dict(kind='text', text='【任务 %s】已运行 %d 秒，%s。可用 /进度 %s 查询。' %
                             (job['id'], elapsed, current['progress'], job['id'])), job['id'], job['id'] + ':progress')
                         notice_sent = True
@@ -380,6 +381,23 @@ class TaskService:
 
     def publish(self, job):
         ev = self.store.session(job['scope']).get('event') or job['event']
+        if self.cfg.get('role_task_results', False):
+            with self.store.connect() as db:
+                published=db.execute('SELECT 1 FROM outbox WHERE dedupe=?',(job['id']+':result:1',)).fetchone()
+            if not published:
+                summary=job.get('role_summary')
+                if not summary:
+                    try:
+                        presenter=getattr(self, 'result_presenter', None)
+                        summary=akari_role_results.clean(presenter(job) if presenter else '', job)
+                    except Exception as exc:
+                        self.log('role result presentation failed: '+type(exc).__name__)
+                        summary=akari_role_results.fallback(job)
+                    self.store.update(job['id'], role_summary=summary)
+                self.store.enqueue(ev, dict(kind='text',text=akari_role_results.receipt(job,summary)),job['id'],job['id']+':result:1')
+            for artifact in akari_role_results.auto_files(job,int(self.cfg.get('agent_auto_artifacts',2))):
+                self.store.enqueue(ev,dict(kind='media',**artifact),job['id'],artifact_key(job,artifact['path']))
+            return
         pages = split_full(job.get('result') or '（没有正文）', int(self.cfg.get('agent_page_chars', 700)))
         header = '【任务 %s · %s】\n' % (job['id'], LABELS[job['status']])
         if job.get('error'):

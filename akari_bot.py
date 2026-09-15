@@ -3,6 +3,8 @@
 import base64, json, os, queue, re, signal, socket, ssl, struct, sys, threading, time, traceback
 from akari_tasks import TaskStore, split_full
 from akari_commands import Commands, task_text
+import akari_role_tasks
+import akari_role_results
 from akari_worker import TaskService
 import akari_delivery
 from akari_runtime import Runtime
@@ -50,7 +52,7 @@ RULES = '''
 
 【当前场景】你在QQ上通过API和真人聊天，对方不知道也不需要知道你的运行方式。
 【回复规则】
-1. 永远以赤座灯里的身份和口吻回复，绝不提及AI、模型、程序、服务器、接口等词。
+1. 以赤座灯里的身份和口吻交流，同时履行 QQ 任务助手职责。不要无故讲实现术语；用户询问技术问题、故障或能力边界时，要准确解释，不因人设隐瞒事实。
 2. 回复要短：一般1~2句、70字以内，像QQ随手打字的感觉，不要写小作文。
 3. 群聊里话题和你无关、也没人喊你时，可以只输出 NO_REPLY 保持安静。
    但只要有人@你、喊你名字、或直接问你问题，绝对禁止输出 NO_REPLY，必须回应。
@@ -452,7 +454,7 @@ def gateway_loop(q):
 def system_prompt():
     return PERSONA + RULES
 
-def call_llm(messages):
+def call_llm(messages, tools=None, *, timeout=None, attempts=2):
     try:
         with open(CFG['llm_key_file'], encoding='utf-8') as f:
             key = f.read().strip()
@@ -463,13 +465,18 @@ def call_llm(messages):
             'temperature': float(CFG.get('temperature', 0.85)),
             'top_p': float(CFG.get('top_p', 0.95)),
             'max_tokens': int(CFG.get('max_tokens', 420))}
+    if tools:
+        body.update(tools=tools, tool_choice='auto', max_tokens=max(1200, body['max_tokens']))
     url = CFG['llm_base'].rstrip('/') + '/v1/chat/completions'
-    for attempt in (1, 2):
+    for attempt in range(1, attempts + 1):
         try:
             st, d = http_json(url, 'POST', {'Authorization': 'Bearer ' + key}, body,
-                              timeout=int(CFG.get('llm_timeout', 90)), verify=False)
+                              timeout=timeout or int(CFG.get('llm_timeout', 90)), verify=False)
             if st == 200 and d.get('choices'):
-                content = ((d['choices'][0].get('message') or {}).get('content') or '').strip()
+                message = d['choices'][0].get('message') or {}
+                if tools and message.get('tool_calls'):
+                    return message
+                content = (message.get('content') or '').strip()
                 content = re.sub(r'<think.*?>.*?</think.*?>', '', content, flags=re.S).strip()
                 if content:
                     return content
@@ -566,9 +573,9 @@ def handle_event(ev):
         if mode == 'at_or_keyword' and not (mentioned or re.search(CFG.get('keyword_regex', ''), ev['content'], re.IGNORECASE)):
             STORE.save()
             return
-    text = clean_text(ev['content'])
+    text = task_text(ev['content']) if akari_role_tasks.enabled(CFG) else clean_text(ev['content'])
     if (ev.get('attachments') or []) and '[图片]' not in text:
-        text = (text + ' [这条消息带了一张图片]').strip()
+        text = (text + ' [本条消息带有附件]' ).strip()
     if CFG.get('agent_enabled', True) and text:
         low = text.lstrip()
         if akari_voice is not None and CFG.get('voice_enabled', True):
@@ -646,6 +653,7 @@ def handle_event(ev):
     hist.append({'role': 'user', 'name': ev['nick'] or '某人', 'text': text, 'ts': ev['ts']})
     del hist[:-40]
     sysmsg = system_prompt()
+    sysmsg += akari_role_tasks.prompt(ev, COMMANDS)
     if ev['scene'] == 'group':
         nicks = '、'.join(sorted({m.get('name', '') for m in hist[-8:] if m.get('role') == 'user' and m.get('name')}))
         if nicks:
@@ -688,11 +696,15 @@ def handle_event(ev):
         else:
             msgs.append({'role': 'user', 'content':
                          '[系统] 对方发了图片但我没能拿到图，请如实说看不到，不要编。'})
+    _role_job = None
     with _llm_sem:
-        reply = call_llm(msgs)
+        if akari_role_tasks.enabled(CFG) and COMMANDS.allowed(ev) and not ev.get('role_chat_only'):
+            reply, _role_job = akari_role_tasks.respond(msgs, ev, COMMANDS, call_llm)
+        else:
+            reply = call_llm(msgs)
     reply = (reply or '').strip()
     _m = re.match(r'(?i)^SEARCH\s*[:：]\s*(.+)$', reply.split('\n')[0].strip())
-    if _m and akari_web and CFG.get('search_enabled', True):
+    if not _role_job and _m and akari_web and CFG.get('search_enabled', True):
         _q = _m.group(1).strip()[:120]
         log('search requested: ' + _q)
         try:
@@ -716,7 +728,7 @@ def handle_event(ev):
     if akari_stickers is not None:
         reply, _stq = akari_stickers.extract(reply)
     # IMAGEGUARD: 声称要画却没给 IMAGE: 时，自动重问一次
-    if (reply and akari_image is not None and CFG.get('image_enabled', True)
+    if (not _role_job and reply and akari_image is not None and CFG.get('image_enabled', True)
             and 'IMAGE:' not in reply
             and 'VIDEO:' not in reply and 'GIF:' not in reply):
         _say = ('我去画', '我画一', '画一张', '我来画',
@@ -763,7 +775,10 @@ def handle_event(ev):
         hist.append({'role': 'assistant', 'name': CFG.get('bot_name', '赤座灯里'), 'text': reply, 'ts': time.time()})
         STORE.save()
         return
-    if reply:
+    if _role_job:
+        reply += '\n任务 '+_role_job['id']+' · /进度 '+_role_job['id']+' · /取消 '+_role_job['id']
+        TASK_STORE.enqueue(ev, {'kind':'text','text':reply}, _role_job['id'], _role_job['id']+':ack')
+    elif reply:
         send_reply(ev, reply)
     if _imq and akari_image is not None and CFG.get('image_enabled', True):
         threading.Thread(target=run_image_task, args=(ev, _imq[0]), daemon=True).start()
@@ -846,7 +861,7 @@ def dispatch_event(ev, chat_queue):
     with STORE.lock:
         if ev['key'] in STORE.done_set:
             return
-    if COMMANDS.recognizes(ev):
+    if not akari_role_tasks.route(ev, COMMANDS) and COMMANDS.recognizes(ev):
         COMMANDS.handle(ev)
         STORE.mark(ev['key'])
         STORE.save()
@@ -855,7 +870,7 @@ def dispatch_event(ev, chat_queue):
         TASK_STORE.refresh(ev)
     raw = task_text(ev.get('content', ''))
     if raw == '/聊' or raw.startswith('/聊 '):
-        ev = dict(ev, content=raw[2:].lstrip())
+        ev = dict(ev, content=raw[2:].lstrip(), role_chat_only=True)
     chat_queue.put(ev)
 
 
@@ -887,9 +902,26 @@ def invalidate_qq_token():
         _tok.update(t='', exp=0.0)
 
 
+def render_role_result(job):
+    # Share the role persona, but give completion only authoritative task facts.
+    # A bounded separate request does not hold the chat semaphore.
+    reply=call_llm(akari_role_results.messages(job, system_prompt()), timeout=20, attempts=1)
+    reply=akari_role_results.clean(reply,job)
+    ev=job['event']
+    key=('g:'+ev['group_openid']) if ev['scene']=='group' else ('c:'+ev['user_openid'])
+    with STORE.lock:
+        history=STORE.chats.setdefault(key,[])
+        history.append({'role':'assistant','name':CFG.get('bot_name','赤座灯里'),
+                        'text':reply+'（任务 '+job['id']+'）','ts':time.time()})
+        del history[:-40]
+    STORE.save()
+    return reply
+
+
 TASK_STORE = TaskStore(STATE)
 COMMANDS = Commands(TASK_STORE, CFG, log)
 TASK_SERVICE = TaskService(TASK_STORE, CFG, log)
+TASK_SERVICE.result_presenter = render_role_result
 QQ_TRANSPORT = akari_delivery.QQTransport(CFG, TASK_STORE, http_json, get_token, log, invalidate_qq_token)
 akari_delivery.CURRENT = QQ_TRANSPORT
 OUTBOX = akari_delivery.Outbox(TASK_STORE, QQ_TRANSPORT, log)

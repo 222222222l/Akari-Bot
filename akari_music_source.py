@@ -2,6 +2,8 @@
 import ipaddress
 import json
 import os
+import re
+import time
 from pathlib import Path
 import shutil
 import socket
@@ -45,17 +47,23 @@ def run(args, timeout, log=None):
     if result.returncode:
         # No automatic attempt to bypass paid/login/DRM restrictions.
         error = result.stderr[-1800:]
-        raise ValueError('公开歌曲获取失败：' + error)
+        if 'Sign in to confirm' in error or 'not a bot' in error:
+            raise ValueError('YouTube 要求登录/人机验证，此音源当前不可下载；请换候选或使用 bilibili 搜索。完整原因保留在下载日志。')
+        raise ValueError('公开歌曲获取失败：' + error[-500:])
     return result.stdout
 
 
-def search(query, cfg):
+def search(query, cfg, platform='youtube'):
     if not cfg.get('auto_download', True):
         raise ValueError('自动搜索下载已关闭，请提供本地歌曲或音频附件。')
     if not isinstance(query, str) or not 1 <= len(query.strip()) <= 240 or query.startswith('-'):
         raise ValueError('歌曲搜索词须为1至240字。')
+    prefixes = {'youtube': 'ytsearch5:', 'bilibili': 'bilisearch5:'}
+    if platform not in prefixes:
+        raise ValueError('搜索平台须为 youtube 或 bilibili。')
+    started = time.monotonic()
     raw = run(command(cfg) + ['--flat-playlist', '--dump-single-json', '--skip-download',
-                             '--', 'ytsearch5:' + query], int(cfg.get('download_timeout', 180)))
+                             '--', prefixes[platform] + query], int(cfg.get('download_timeout', 180)))
     result = json.loads(raw)
     entries = result.get('entries') or [result]
     found = []
@@ -70,6 +78,20 @@ def search(query, cfg):
             continue
         found.append(dict(title=str(entry.get('title') or '')[:240], url=url, duration=duration,
                           uploader=str(entry.get('channel') or entry.get('uploader') or '')[:160]))
+    # BiliBili's flat search may only expose URLs. Enrich independently so one
+    # unavailable video cannot discard all other candidates.
+    metadata_deadline = min(time.monotonic() + 30, started + int(cfg.get('download_timeout', 180)))
+    for candidate in found[:5]:
+        remaining = int(metadata_deadline - time.monotonic())
+        if candidate['title'] or remaining < 1:
+            continue
+        try:
+            public_url(candidate['url'])
+            detail = json.loads(run(command(cfg) + ['--dump-single-json', '--skip-download', '--', candidate['url']], min(8, remaining)))
+            candidate.update(title=str(detail.get('title') or '')[:240],
+                             uploader=str(detail.get('uploader') or '')[:160], duration=detail.get('duration'))
+        except (ValueError, OSError) as exc:
+            candidate['metadata_error'] = str(exc)[-300:]
     if not found:
         raise ValueError('没有找到合适的公开歌曲结果，请补充歌手/原文歌名或提供链接。')
     return found[:5]
@@ -82,7 +104,7 @@ def download(url, destination, cfg):
     folder = Path(destination)
     folder.mkdir(parents=True, exist_ok=True)
     metadata = json.loads(run(command(cfg) + ['--dump-single-json', '--skip-download', '--', url],
-                              int(cfg.get('download_timeout', 180))))
+                              int(cfg.get('download_timeout', 180)), folder / 'metadata.log'))
     duration = metadata.get('duration')
     if metadata.get('is_live') or not isinstance(duration, (int, float)) or not 5 <= duration <= float(cfg.get('download_max_seconds', 900)):
         raise ValueError('歌曲时长未知、过长或为直播，未开始下载。')
@@ -120,10 +142,48 @@ def resolve_source(value, task, cfg):
     except ValueError:
         if not value or '/' in value or '\\' in value or value in ('.', '..'):
             raise
-    candidates = search(value + ' official audio', cfg)
-    # The native agent can inspect candidates and choose a URL; direct commands use the top result.
-    source, provenance = download(candidates[0]['url'], Path(task) / 'download', cfg)
-    provenance['query'] = value
-    provenance['selection'] = 'top search result'
-    (Path(task) / 'source-selection.json').write_text(json.dumps(dict(selected=provenance, candidates=candidates), ensure_ascii=False, indent=2))
-    return source, provenance
+    # User prose can reach structured /翻唱; remove only the request prefix.
+    query = re.sub(r'^(?:请)?(?:为我|帮我|给我)?(?:翻唱|唱一下|唱一首)\s*', '', value).strip('《》「」 ')
+    attempts, candidates, search_errors = [], [], []
+    record = Path(task) / 'source-selection.json'
+    record.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + 300
+    def save(selected=None):
+        record.write_text(json.dumps(dict(query=query, selected=selected, attempts=attempts,
+            candidates=candidates, search_errors=search_errors), ensure_ascii=False, indent=2))
+    seen = set()
+    for platform in ('youtube', 'bilibili'):
+        remaining = int(deadline - time.monotonic())
+        if remaining < 1:
+            break
+        bounded = dict(cfg, download_timeout=min(int(cfg.get('download_timeout', 180)), 45, remaining))
+        try:
+            results = search(query, bounded, platform=platform)
+        except (ValueError, OSError) as exc:
+            search_errors.append(dict(platform=platform, error=str(exc)[-600:]))
+            save()
+            continue
+        candidates.extend(results)
+        for candidate in results[:3]:
+            url = candidate['url']
+            remaining = int(deadline - time.monotonic())
+            if url in seen or remaining < 2:
+                continue
+            seen.add(url)
+            # Metadata + extraction each consume at most this timeout.
+            bounded = dict(cfg, download_timeout=min(int(cfg.get('download_timeout', 180)), 45, remaining // 2))
+            attempt = dict(url=url, platform=platform)
+            attempts.append(attempt)
+            save()
+            try:
+                source, provenance = download(url, Path(task) / 'download' / ('candidate-%02d' % len(attempts)), bounded)
+            except (ValueError, OSError) as exc:
+                attempt.update(status='failed', error=str(exc)[-600:])
+                save()
+                continue
+            attempt['status'] = 'succeeded'
+            provenance.update(query=query, selection='first downloadable candidate', platform=platform)
+            save(provenance)
+            return source, provenance
+    save()
+    raise ValueError('已尝试 %d 个候选，仍未取得可用音源（可能需要登录验证或当前网络不可用）。请提供明确的公开链接或音频附件；换源记录见 source-selection.json。' % len(attempts))
