@@ -32,6 +32,36 @@ class DeliveryTests(unittest.TestCase):
             raise result
         return result
 
+    def test_audio_duration_rejection_uses_original_file_bytes_once(self):
+        path=Path(self.tmp.name)/'song.mp3';path.write_bytes(b'original-audio')
+        self.responses=[(400,dict(code=40093013,message='上传音频时长超过限制')),
+                        (200,dict(file_info='file-upload')),(200,dict(id='sent-file'))]
+        checkpoints=[]
+        receipt=self.transport.send(self.ev,dict(kind='media',path=str(path)),checkpoint=lambda r:checkpoints.append(dict(r)))
+        uploads=[b for u,b in self.calls if u.endswith('/files')]
+        self.assertEqual([b['file_type'] for b in uploads],[3,4])
+        self.assertEqual(uploads[0]['file_data'],uploads[1]['file_data'])
+        self.assertEqual(receipt['message_id'],'sent-file');self.assertEqual(receipt['upload_file_type'],4)
+        self.assertTrue(any(r.get('upload_file_type')==4 for r in checkpoints))
+        self.assertEqual(len([u for u,b in self.calls if u.endswith('/messages')]),1)
+
+    def test_audio_fallback_survives_failure_and_does_not_repeat_voice_upload(self):
+        path=Path(self.tmp.name)/'song.mp3';path.write_bytes(b'original')
+        self.responses=[(400,dict(code=40093013,message='duration')),(400,dict(code=123,message='file rejected'))]
+        saved={}
+        with self.assertRaises(DeliveryError):
+            self.transport.send(self.ev,dict(kind='media',path=str(path)),checkpoint=lambda r:saved.update(r))
+        self.assertEqual(saved['upload_file_type'],4)
+        self.responses=[(200,dict(file_info='file')),(200,dict(id='ok'))]
+        self.transport.send(self.ev,dict(kind='media',path=str(path)),saved)
+        self.assertEqual([b['file_type'] for u,b in self.calls if u.endswith('/files')],[3,4,4])
+
+    def test_unrelated_audio_error_does_not_change_upload_type(self):
+        path=Path(self.tmp.name)/'song.mp3';path.write_bytes(b'original')
+        self.responses=[(400,dict(code=40093002,message='quota'))]
+        with self.assertRaises(DeliveryError):self.transport.send(self.ev,dict(kind='media',path=str(path)))
+        self.assertEqual(len(self.calls),1)
+
     def test_ack_result_media_get_distinct_sequences(self):
         self.transport.send(self.ev, dict(kind='text', text='ack'))
         self.transport.send(self.ev, dict(kind='text', text='result'))

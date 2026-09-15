@@ -99,17 +99,30 @@ class QQTransport:
                     raise DeliveryError('文件 %.1f MiB，超过 bot 本地配置上限 %.1f MiB（不是 QQ 官方限额）' %
                         (path.stat().st_size / 1048576, cap / 1048576), category='local_size')
                 if not receipt.get('file_info') or receipt.get('file_expiry', 0) < time.time():
-                    file_type = payload.get('file_type') or media_type(path)
-                    if self.cfg.get('agent_chunked_upload', True):
-                        uploaded = ChunkedUploader(self.post, self.cfg).upload(route, path, file_type, receipt, checkpoint)
-                    else:
-                        # Explicit compatibility mode, bounded independently from large-file limits.
-                        with path.open('rb') as stream:
-                            raw = stream.read(1024 * 1024 + 1)
-                        if len(raw) > 1024 * 1024:
-                            raise DeliveryError('兼容上传仅支持 1 MiB，请启用官方分片上传', category='local_size')
-                        uploaded = self.post(route + '/files', dict(file_type=file_type,
-                            file_data=base64.b64encode(raw).decode('ascii'), file_name=path.name, srv_send_msg=False), 60)
+                    file_type = receipt.get('upload_file_type') or payload.get('file_type') or media_type(path)
+                    try:
+                        if self.cfg.get('agent_chunked_upload', True):
+                            uploaded = ChunkedUploader(self.post, self.cfg).upload(route, path, file_type, receipt, checkpoint)
+                        else:
+                            # Explicit compatibility mode, bounded independently from large-file limits.
+                            with path.open('rb') as stream:
+                                raw = stream.read(1024 * 1024 + 1)
+                            if len(raw) > 1024 * 1024:
+                                raise DeliveryError('兼容上传仅支持 1 MiB，请启用官方分片上传', category='local_size')
+                            uploaded = self.post(route + '/files', dict(file_type=file_type,
+                                file_data=base64.b64encode(raw).decode('ascii'), file_name=path.name, srv_send_msg=False), 60)
+                    except DeliveryError as exc:
+                        # Only an explicit upload rejection permits changing media type.
+                        # Never retry an uncertain /messages result as a different file.
+                        if file_type != 3 or str(exc.code) != '40093013':
+                            raise
+                        for key in ('upload', 'upload_progress', 'file_info', 'file_expiry'):
+                            receipt.pop(key, None)
+                        receipt['upload_file_type'] = 4
+                        receipt['audio_fallback_reason'] = 'QQ audio duration limit (40093013)'
+                        checkpoint(receipt)
+                        self.log('QQ audio duration rejected; retrying original bytes as file: ' + path.name)
+                        return self.send(ev, payload, receipt, checkpoint)
                     if not uploaded.get('file_info'):
                         raise DeliveryError('QQ 上传响应没有 file_info')
                     receipt.update(file_info=uploaded['file_info'],

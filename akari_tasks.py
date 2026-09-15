@@ -264,7 +264,7 @@ class TaskStore:
             for row in rows:
                 previous = json.loads(row['receipt'])
                 # Rebind message identity while retaining reusable media and uploaded parts.
-                retained = {k:v for k,v in previous.items() if k in ('upload', 'upload_progress', 'file_info', 'file_expiry')}
+                retained = {k:v for k,v in previous.items() if k in ('upload', 'upload_progress', 'file_info', 'file_expiry', 'upload_file_type', 'audio_fallback_reason')}
                 db.execute("UPDATE outbox SET event=?,receipt=?,status='pending',attempts=0,next_attempt=0 WHERE id=?",
                            (json.dumps(ev), json.dumps(retained), row['id']))
 
