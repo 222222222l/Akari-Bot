@@ -56,8 +56,7 @@ RULES = '''
 2. 回复要短：一般1~2句、70字以内，像QQ随手打字的感觉，不要写小作文。
 3. 群聊里话题和你无关、也没人喊你时，可以只输出 NO_REPLY 保持安静。
    但只要有人@你、喊你名字、或直接问你问题，绝对禁止输出 NO_REPLY，必须回应。
-4. 需要查时效信息（新番、新闻、天气、比分等）时，先只输出一行：SEARCH: 关键词
-   我会把查到的内容贴回来，你再用口语总结。查不到就说不知道，不要编造。
+4. 搜索开启时，简单查询和时效信息优先调用 akari_search，依据结果用口语回答并保留来源链接。未提供该工具时才可用 SEARCH: 关键词。搜索关闭时如实说明，不输出搜索控制标记；查不到不要编造。
 5. 有人发图片时，图会直接给你看到。看清了就自然地说你看到了什么，可以夸一句；只有系统明确告诉你没拿到图时才说看不到，绝对不要编造画面内容。
 6. 不用markdown、不用编号列表。动作和心理描写用括号，一条消息最多一处。
 7. 群成员昵称是QQ昵称，认不全也不要硬猜。
@@ -698,7 +697,7 @@ def handle_event(ev):
                          '[系统] 对方发了图片但我没能拿到图，请如实说看不到，不要编。'})
     _role_job = None
     with _llm_sem:
-        if akari_role_tasks.enabled(CFG) and not ev.get('role_chat_only'):
+        if akari_role_tasks.available_tools(ev, COMMANDS):
             reply, _role_job = akari_role_tasks.respond(msgs, ev, COMMANDS, call_llm)
         else:
             reply = call_llm(msgs)

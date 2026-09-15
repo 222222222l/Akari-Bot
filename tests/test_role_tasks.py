@@ -3,7 +3,7 @@ from pathlib import Path
 import queue
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from akari_commands import Commands
 from akari_tasks import TaskStore
 from akari_worker import TaskService
@@ -75,6 +75,38 @@ class RoleTests(unittest.TestCase):
         call=dict(id='c',function=dict(name='akari_task',arguments=json.dumps(dict(action='submit',request='翻唱'))))
         text,job=role.respond([],self.ev,self.cmd,Mock(side_effect=[{'tool_calls':[call]},'好的交给我吧！']))
         self.assertIn('没有任务权限',text);self.assertEqual(self.db.list(),[])
+
+    def test_unlisted_user_can_search_without_task_or_file_permission(self):
+        self.ev['user_openid']='unlisted'
+        self.cfg.update(search_enabled=True,agent_enabled=False)
+        tools=role.available_tools(self.ev,self.cmd)
+        self.assertEqual([t['function']['name'] for t in tools],['akari_search'])
+        call=dict(id='s',function=dict(name='akari_search',arguments=json.dumps(dict(query='天气'))))
+        with patch('akari_role_tasks.akari_web.search',return_value=[dict(title='天气来源',url='https://example.com',snippet='晴')]) as search:
+            reply,job=role.respond([],self.ev,self.cmd,Mock(side_effect=[{'tool_calls':[call]},'查到晴天哦。']))
+        search.assert_called_once();self.assertIsNone(job);self.assertEqual(self.db.list(),[])
+        with self.assertRaises(ValueError):role.invoke(dict(action='submit',request='上传文件'),self.ev,self.cmd)
+
+    def test_search_default_matches_console_and_switch_is_enforced(self):
+        self.assertIn('联网查询：启用',role.prompt(self.ev,self.cmd))
+        self.cfg['search_enabled']=False
+        self.assertNotIn('akari_search',[t['function']['name'] for t in role.available_tools(self.ev,self.cmd)])
+        with patch('akari_role_tasks.akari_web.search') as search:
+            with self.assertRaises(ValueError):role.search_invoke({'query':'weather'},self.cmd)
+            search.assert_not_called()
+
+    def test_search_rejects_file_parameters_and_chat_escape_keeps_search(self):
+        ev=dict(self.ev,role_chat_only=True)
+        self.assertEqual([t['function']['name'] for t in role.available_tools(ev,self.cmd)],['akari_search'])
+        with self.assertRaises(ValueError):role.search_invoke({'query':'weather','file':'report.txt'},self.cmd)
+
+    def test_task_denial_does_not_override_subsequent_search_answer(self):
+        self.ev['user_openid']='unlisted'
+        task=dict(id='t',function=dict(name='akari_task',arguments=json.dumps(dict(action='submit',request='搜索'))))
+        search=dict(id='s',function=dict(name='akari_search',arguments=json.dumps(dict(query='天气'))))
+        with patch('akari_role_tasks.akari_web.search',return_value=[{'title':'天气'}]):
+            text,job=role.respond([],self.ev,self.cmd,Mock(side_effect=[{'tool_calls':[task]},{'tool_calls':[search]},'查到了，天气晴朗。']))
+        self.assertEqual(text,'查到了，天气晴朗。');self.assertIsNone(job);self.assertEqual(self.db.list(),[])
 
     def test_routing_preserves_fast_controls_and_chat_escape(self):
         for text in ('/任务 分析文件','/音乐 写首歌','/翻唱 恋爱循环','就按刚才说的做'):

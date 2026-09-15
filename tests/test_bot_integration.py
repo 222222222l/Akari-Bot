@@ -20,7 +20,7 @@ class BotIntegrationTests(unittest.TestCase):
                    llm_base='https://model.invalid', agent_allowed_openids=['owner'],
                    dry_run=False, agent_workdir=str(root), sticker_enabled=False,
                    image_enabled=False, video_enabled=False, voice_enabled=False,
-                   group_reply_mode='all', agent_enabled=True, role_task_dispatch=False)
+                   group_reply_mode='all', agent_enabled=True, role_task_dispatch=False,search_enabled=False)
         (root / 'config.json').write_text(json.dumps(cfg))
         (root / 'persona.txt').write_text('test')
         with patch.dict(os.environ, {'AKARI_BASE': str(root)}):
@@ -118,6 +118,19 @@ class BotIntegrationTests(unittest.TestCase):
         with self.bot.TASK_STORE.connect() as db:
             text=json.loads(db.execute('SELECT payload FROM outbox').fetchone()[0])['text']
         self.assertIn('没有任务权限',text);self.assertNotIn('akari_task',text)
+
+    def test_unlisted_chat_user_searches_with_agent_disabled(self):
+        self.bot.CFG.update(agent_enabled=False,search_enabled=True)
+        call=dict(id='s',function=dict(name='akari_search',arguments=json.dumps({'query':'Python 官网'})))
+        responses=iter([{'tool_calls':[call]},'Python 官网是 https://www.python.org/'])
+        self.bot.call_llm=lambda messages,tools=None:next(responses)
+        with patch('akari_role_tasks.akari_web.search',return_value=[dict(title='Python',url='https://www.python.org/')]):
+            self.bot.handle_event(dict(self.ev('帮我查 Python 官网','search-only'),user_openid='unlisted'))
+        self.assertEqual(self.bot.TASK_STORE.list(),[])
+        with self.bot.TASK_STORE.connect() as db:
+            payloads=[json.loads(r[0]) for r in db.execute('SELECT payload FROM outbox')]
+        self.assertEqual(len(payloads),1);self.assertEqual(payloads[0]['kind'],'text')
+        self.assertIn('python.org',payloads[0]['text'])
 
     def test_gateway_message_key_uses_stable_message_identity(self):
         payload = {'t':'C2C_MESSAGE_CREATE', 'd':{'id':'same-message','author':{'user_openid':'owner'}}}
