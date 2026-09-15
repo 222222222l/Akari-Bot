@@ -1,0 +1,12 @@
+{
+  "name": "akari-bot-dev",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/test_context.mjs",
+    "test:browser": "node tests/admin_browser.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.48.2"
+  }
+}

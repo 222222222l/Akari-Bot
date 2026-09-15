@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#7560c7"><title>灯里 · 控制台</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div id="login" class="login-screen">
+    <div class="login-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="login-flower">✳</div><span>AKARI / YOUR LITTLE COMPANION</span></div>
+    <form id="login-form" class="login-card">
+      <img src="/favicon.svg" width="48" height="48" alt=""><p class="eyebrow">AKARI CONTROL ROOM</p>
+      <h1>欢迎回来。</h1><p class="muted">灯里的日常，从这里开始。</p>
+      <label for="access-token">控制台访问口令</label><input id="access-token" type="password" autocomplete="current-password" required placeholder="输入你的访问口令" maxlength="256">
+      <p id="login-error" class="error-text" role="alert"></p><button class="button primary" type="submit">进入控制台 <span aria-hidden="true">↗</span></button>
+      <p class="login-hint">首次使用？在服务器查看<br><code>state/admin/access.token</code></p>
+      <small>本机控制 · 独立会话 · 私密访问</small>
+    </form>
+  </div>
+  <div id="app" class="app-shell" hidden>
+    <aside class="sidebar" id="sidebar">
+      <a href="#overview" class="brand"><img src="/favicon.svg" width="39" height="39" alt=""><span>灯里 <b>Akari</b><small>BOT CONTROL ROOM</small></span></a>
+      <div class="workspace"><span class="avatar">あ</span><span><strong id="sidebar-name">赤座灯里</strong><small>我的 QQ 机器人</small></span><span class="workspace-mark">✦</span></div>
+      <span class="nav-label">工作空间</span>
+      <nav aria-label="主导航">
+        <a href="#overview" data-page="overview"><i data-icon="grid"></i>运行概览</a>
+        <a href="#features" data-page="features"><i data-icon="sliders"></i>功能管理<span class="nav-count" id="nav-feature-count">—</span></a>
+        <a href="#settings" data-page="settings"><i data-icon="settings"></i>参数配置</a>
+        <a href="#tasks" data-page="tasks"><i data-icon="layers"></i>任务记录</a>
+        <a href="#logs" data-page="logs"><i data-icon="terminal"></i>运行日志<span class="nav-dot" id="log-dot" hidden></span></a>
+        <a href="#system" data-page="system"><i data-icon="activity"></i>系统诊断</a>
+      </nav>
+      <div class="sidebar-bottom"><div class="sidebar-note"><span class="tiny-dot"></span>属于灯里的小小控制室<p>把复杂留在后台，<br>把陪伴留在每一次对话里。</p></div><button class="logout" id="logout"><i data-icon="logout"></i>退出登录</button></div>
+    </aside>
+    <div class="main-shell">
+      <header class="topbar"><button id="menu-toggle" class="icon-button mobile-only" aria-label="展开导航" aria-expanded="false"><i data-icon="menu"></i></button><div class="breadcrumb">工作空间 <span>/</span> <b id="breadcrumb-current">运行概览</b></div><div class="topbar-right"><span id="connection" class="connection"><span class="tiny-dot"></span>连接中</span><span class="topbar-divider"></span><span class="topbar-user">本机管理员<span class="user-avatar">A</span></span></div></header>
+      <main>
+        <div class="page-heading"><div><p class="eyebrow" id="page-eyebrow">WORKSPACE OVERVIEW</p><h1 id="page-title">运行概览</h1><p id="page-description" class="muted">一眼了解灯里的状态，轻松安排每一项能力。</p></div><button class="button" id="refresh"><i data-icon="refresh"></i>刷新状态</button></div>
+        <div id="global-error" class="notice danger" role="alert" hidden></div>
+        <div id="pending-banner" class="notice" hidden><i data-icon="info"></i><span>配置已保存，重启 bot 后生效。</span><button class="text-button" data-action="restart">应用并重启 <span aria-hidden="true">↗</span></button></div>
+        <section id="page-overview" class="page">
+          <div class="hero"><div><span class="hero-tag"><span class="tiny-dot"></span><span id="hero-status">正在读取运行状态</span></span><h2 id="hero-title">灯里的日常，尽在掌握。</h2><p>对话、创作、歌唱。为每一次灵感，留一个开关。</p><div class="hero-actions"><a class="button primary" href="#features">管理功能 <i data-icon="arrow"></i></a><a class="hero-link" href="#logs">查看运行日志 <span>↗</span></a></div></div><div class="hero-art" aria-hidden="true"><div class="orbit"></div><div class="hero-disc"><span>あ</span><small>AKARI</small></div><span class="spark s1">✦</span><span class="spark s2">✧</span><span class="spark s3">✦</span><div class="music-chip">♫ <span>stay curious, stay akari.</span></div></div></div>
+          <div class="stats-grid" id="stats"></div>
+          <div class="section-heading"><div><h2>常用能力 <span class="section-caption">让灵感随时在线</span></h2></div><a href="#features" class="text-link">全部功能 <span>↗</span></a></div>
+          <div id="quick-features" class="feature-grid compact"></div>
+          <div class="overview-bottom"><section class="panel"><div class="panel-heading"><h2>最近任务</h2><a href="#tasks" class="text-link">查看全部 ↗</a></div><div id="recent-tasks"></div></section><section class="panel quick-panel"><div class="panel-heading"><h2>快捷操作</h2><i data-icon="sparkles"></i></div><button class="quick-action" data-action="restart"><span class="quick-icon violet"><i data-icon="refresh"></i></span><span><strong>应用配置并重启</strong><small>待运行任务结束后可用</small></span><i data-icon="chevron"></i></button><a href="#system" class="quick-action"><span class="quick-icon mint"><i data-icon="activity"></i></span><span><strong>检查服务连通性</strong><small>模型、ComfyUI 与语音服务</small></span><i data-icon="chevron"></i></a><a href="#logs" class="quick-action"><span class="quick-icon peach"><i data-icon="terminal"></i></span><span><strong>排查运行问题</strong><small>搜索错误与完整堆栈</small></span><i data-icon="chevron"></i></a><p class="quiet-note"><i data-icon="shield"></i>配置中的访问密钥不会显示在页面。</p></section></div>
+        </section>
+        <section id="page-features" class="page" hidden><div class="section-heading"><h2>为灯里开启更多可能</h2><span class="muted" id="features-summary"></span></div><div id="all-features" class="feature-grid"></div><div class="notice subtle"><i data-icon="info"></i><span>开关修改后，请点击底部“保存修改”，再应用并重启 bot。</span></div><div class="panel music-callout"><span class="quick-icon violet"><i data-icon="music"></i></span><div><h2>让阿卡林唱给你听</h2><p>在 QQ 中发送 <code>/翻唱</code> 并附上音频；使用 <code>/片段 30</code> 测试短片段，或 <code>/重编曲</code> 尝试 YuE2 创作。</p></div><a class="button" href="#settings/voice">调整翻唱参数 ↗</a></div></section>
+        <section id="page-settings" class="page" hidden><div class="settings-layout"><nav id="settings-nav" class="settings-nav" aria-label="参数分类"></nav><div class="panel settings-panel"><div class="panel-heading settings-heading"><div><h2 id="settings-title"></h2><p id="settings-description" class="muted"></p></div><span class="tag">参数配置</span></div><form id="settings-form" class="fields-grid"></form></div></div></section>
+        <section id="page-tasks" class="page" hidden><div class="panel"><div class="panel-heading"><h2>最近 40 条任务</h2><select id="task-filter" aria-label="按任务状态筛选"><option value="all">所有状态</option><option value="running">执行中</option><option value="queued">排队中</option><option value="succeeded">已完成</option><option value="failed">失败 / 超时</option></select></div><div id="task-list"></div></div><p class="footnote">这里展示任务工作台记录。普通聊天不会计入任务；任务详情中的敏感凭据会被隐藏。</p></section>
+        <section id="page-logs" class="page" hidden><div class="panel logs-panel"><div class="panel-heading"><div class="log-title"><h2>日志调试</h2><span class="tag" id="log-live">实时刷新</span></div><div class="button-group"><button class="button small" id="log-pause"><i data-icon="pause"></i>暂停</button><button class="button small" id="log-copy"><i data-icon="copy"></i>复制</button><button class="button small" id="log-download"><i data-icon="download"></i>下载</button></div></div><div class="log-toolbar"><select id="log-source" aria-label="日志来源"><option value="bot">Bot 运行日志</option><option value="console">进程输出 / 堆栈</option><option value="admin">管理操作日志</option></select><select id="log-level" aria-label="日志级别"><option value="all">所有级别</option><option value="error">仅错误</option><option value="warning">仅警告</option><option value="info">仅信息</option></select><label class="search-box"><i data-icon="search"></i><input id="log-search" type="search" placeholder="搜索错误、事件或任务 ID" maxlength="200" aria-label="搜索日志"></label><label class="checkbox-label"><input type="checkbox" id="log-follow" checked>跟随最新</label></div><div id="log-meta" class="log-meta"></div><div id="log-content" class="log-content" tabindex="0" role="region" aria-label="日志内容"></div><div class="log-footer"><span>已隐藏访问凭据 · 保留多行错误堆栈</span><span id="log-updated">等待载入</span></div></div><p class="footnote">每次读取文件末尾最多 512 KiB，显示匹配的最近 300 条。级别根据关键词推断。</p></section>
+        <section id="page-system" class="page" hidden><div class="system-grid"><section class="panel"><div class="panel-heading"><h2>Bot 服务</h2><span class="tag">systemd</span></div><div id="system-status" class="system-status"></div><div class="service-actions"><button class="button primary" data-action="start"><i data-icon="play"></i>启动</button><button class="button" data-action="restart"><i data-icon="refresh"></i>重启</button><button class="button danger-button" data-action="stop"><i data-icon="stop"></i>停止</button></div><p class="quiet-note">有排队或执行中的任务时，停止与重启会被阻止。</p></section><section class="panel"><div class="panel-heading"><h2>依赖服务连通性</h2><button class="button small" id="diagnose"><i data-icon="activity"></i>运行检查</button></div><div id="diagnostics" class="diagnostics"><div class="empty-state"><i data-icon="activity"></i><strong>准备检查运行环境</strong><p>检查不会调用模型或发送 QQ 消息。</p></div></div></section></div><section class="panel gpu-panel"><div class="panel-heading"><h2>GPU 资源</h2><span class="muted">运行检查后更新</span></div><div id="gpu-list" class="gpu-grid"><p class="muted">尚未检查</p></div></section></section>
+        <footer class="page-footer"><span>✳ AKARI CONSOLE</span><span id="last-update">正在连接本机服务</span></footer>
+      </main>
+    </div>
+    <div id="save-bar" class="save-bar" hidden><div><span class="unsaved-dot"></span><strong id="change-count">有未保存的修改</strong><small>保存后可选择应用配置</small></div><div class="button-group"><button class="button" id="discard">撤销修改</button><button class="button primary" id="save"><i data-icon="check"></i>保存修改</button></div></div>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="confirm-dialog"><form method="dialog"><span class="dialog-icon"><i data-icon="refresh"></i></span><h2 id="confirm-title">重启 bot？</h2><p id="confirm-description"></p><div class="dialog-actions"><button class="button" value="cancel">取消</button><button class="button primary" id="confirm-submit" value="confirm">确认操作</button></div></form></dialog>
+</body>
+</html>

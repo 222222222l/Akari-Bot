@@ -1,0 +1,19 @@
+{
+  "cuda_visible_devices": "0",
+  "reference": "../voice/ref/akari_ref.wav",
+  "svc_python": ".venv-svc/bin/python",
+  "svc_repo": "vendor/seed-vc",
+  "yue_python": ".venv-yue/bin/python",
+  "yue_model": "m-a-p/YuE2-3B",
+  "yue_vae": "m-a-p/YuE2-Vae",
+  "yue_revision": "29b3558dd46954a0cd9021dc76d5c91864a0f1c7",
+  "yue_vae_revision": "9a94e1d0ea9f8087e98f77fa88df4a4068104d2a",
+  "sheetsage_python": ".venv-sheetsage/bin/python",
+  "sheetsage_repo": "models/SheetSage2",
+  "max_seconds": 600,
+  "diffusion_steps": 40,
+  "memory_budget_gib": 24,
+  "style": "Japanese, anime opening, J-pop rock, bright youthful female lead vocal, melodic electric guitar, bass and drums",
+  "svc_checkpoint": "vendor/seed-vc/checkpoints/DiT_seed_v2_uvit_whisper_base_f0_44k_bigvgan_pruned_ft_ema_v2.pth",
+  "svc_model_config": "vendor/seed-vc/checkpoints/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml"
+}

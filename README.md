@@ -1,0 +1,202 @@
+<div align="center">
+
+# Akari Bot · 阿卡林
+
+**一个能聊天、创作、唱歌和处理工作任务的 QQ Bot。**
+
+Python 核心 · 多模态交互 · 持久任务队列 · 阿卡林翻唱 · Web 控制台
+
+[快速开始](#快速开始) · [控制台](docs/admin.md) · [任务指令](docs/tasks.md) · [唱歌功能](docs/singing.md) · [部署](docs/deployment.md) · [开发测试](docs/development.md)
+
+</div>
+
+## 能做什么
+
+| 能力 | 实现与说明 |
+| --- | --- |
+| 角色聊天 | 赤座灯里人设；对接兼容 Chat Completions 的模型服务；历史上下文、群聊 @ / 关键词触发 |
+| 多模态互动 | 图片理解、联网搜索、表情回复；视觉理解需要所接模型支持图片输入 |
+| 图片与视频 | 对接本机 ComfyUI 工作流，支持等待、超时、冷却与媒体交付 |
+| 语音回复 | 调用独立 TTS 服务，仓库提供 IndexTTS 适配服务源码 |
+| 原曲翻唱 | Demucs 分离人声/伴奏 → Seed-VC 保留音高转换音色 → FFmpeg 混音，支持短片段试听 |
+| 音乐重编曲 | SheetSage2 转谱（或用户提供 ABC）→ YuE2 生成 → Seed-VC 音色转换 |
+| 任务工作台 | Pi CLI 工具执行；任务排队、会话隔离、进度、取消、完整结果、附件和补发 |
+| 控制台 | 功能开关、参数、QQ/进程状态、任务、错误日志、服务操作和 GPU 诊断 |
+
+聊天与任务控制分别处理，耗时的模型回复不会阻塞 `/进度`、`/取消` 等指令。任务和发件箱存入 SQLite，重启后可以追踪状态与未送达内容。
+
+### 控制台预览
+
+以下截图使用隔离测试数据，未包含真实聊天记录。
+
+![Akari 控制台](docs/assets/console-desktop.png)
+
+[查看手机界面](docs/assets/console-mobile.png)
+
+## 仓库内容与边界
+
+这里包含 Bot 核心、前端、适配器、测试及部署辅助脚本。**模型权重、第三方模型仓库、歌曲、参考声音、表情素材、运行配置和用户记录需自行准备**。克隆源码不等于已安装所有生成服务。
+
+示例配置只启用基础聊天与联网搜索，其余可选功能默认关闭；任务授权名单为空。请完成依赖配置后逐项开启。现有生产配置不会随仓库发布。
+
+## 环境要求
+
+- **Linux、Python 3.11+**：进程组、文件锁与任务恢复依赖 Linux/POSIX；当前验证环境为 Python 3.12。
+- **QQ 机器人应用**：配置 App ID、App Secret，并在平台配置与使用场景对应的事件、消息与媒体权限。
+- **模型服务**：聊天地址形如 `http://127.0.0.1:8000`；Bot 会追加 `/v1/chat/completions`。
+- **按功能安装**：Pi CLI + Node.js（任务执行）、FFmpeg/ffprobe（媒体）、Pillow（图片处理）、ComfyUI、TTS 和音乐独立环境。
+- **GPU**：只用于依赖 GPU 的生成服务，核心 Bot 和控制台本身无需 GPU。
+
+核心和控制台使用 Python 标准库；图片/视频预处理可选依赖见 `requirements-optional.txt`，音乐环境依赖见 `music/`。
+
+## 快速开始
+
+### 1. 获取代码并初始化配置
+
+```bash
+git clone https://github.com/222222222l/Akari-Bot.git
+cd Akari-Bot
+python3 scripts/init_config.py
+```
+
+初始化脚本从示例生成 `config.json` 和 `music/config.json`，将本地文件路径转换为当前仓库绝对路径；**重复执行不会覆盖已有配置**。
+
+### 2. 填写 QQ 与模型配置
+
+编辑 `config.json`：
+
+```json
+{
+  "app_id": "你的 QQ App ID",
+  "app_secret": "你的 QQ App Secret",
+  "llm_base": "http://127.0.0.1:8000",
+  "model": "模型服务实际加载的模型名",
+  "llm_key_file": "/你的仓库路径/secrets/llm.key",
+  "group_reply_mode": "at_only"
+}
+```
+
+上面是关键字段节选，请在初始化生成的完整配置中修改，不要直接覆盖成这个片段。
+
+将模型 API Key 写入 `secrets/llm.key`；若本机模型服务不需要鉴权，保留一个空的 key 文件即可：
+
+```bash
+touch secrets/llm.key
+chmod 600 secrets/llm.key
+# 使用编辑器填写模型 API Key；不要提交此文件。
+```
+
+`llm_base` 不要带 `/v1`；Pi 的 provider `baseUrl` 通常需要 `/v1`，两者配置方式不同。`intents` 示例值来自本项目现有接入配置，须结合自己的 QQ 应用事件权限核对。
+
+### 3. 启动 Bot 与控制台
+
+```bash
+export AKARI_BASE="$(pwd)"
+python3 akari_bot.py
+```
+
+在另一终端、同一仓库目录启动控制台：
+
+```bash
+python3 akari_admin.py --port 18763
+cat state/admin/access.token
+```
+
+在服务器本机打开 **http://127.0.0.1:18763**，用上述访问口令登录。口令不会打印在启动日志中。端口已占用时可使用 `--port` 另选端口。
+
+手动启动时可读写配置、查看任务和日志；控制台的启动/停止/重启与进程状态查询针对 `akari-bot.service`。要使用这些操作，请先完成 [systemd 部署](docs/deployment.md)。
+
+### 4. 按需启用能力
+
+| 功能 | 启用前准备 |
+| --- | --- |
+| 图片理解 | 视觉模型；打开 `vision_enabled` |
+| 表情 | 将自己的图片放入 `stickers/`；打开 `sticker_enabled` |
+| 图片 / 视频 | 安装 ComfyUI、准备兼容的工作流并设置输入/输出路径，详见 [部署文档](docs/deployment.md) |
+| 语音 | 配置可用 `voice_url`，确认 `POST /tts` 返回 WAV；打开 `voice_enabled` |
+| 任务 | 安装并配置 Pi，填写 `agent_provider`、`agent_model` 和 `agent_allowed_openids`；打开 `agent_enabled` |
+| 翻唱 | 准备参考声音，安装音乐环境；同时启用任务和 `music_enabled`，详见 [唱歌文档](docs/singing.md) |
+
+Bot 配置保存后需要重启；音乐内部参数由下一次音乐任务读取。控制台会显示哪些修改尚未保存、哪些配置尚待重启。
+
+## 在 QQ 中使用
+
+```text
+/帮助
+/任务 检查项目并生成测试报告
+/工作 开
+/进度
+/取消
+/结果
+/文件
+/补发
+/工作 关
+```
+
+`/工作 开` 后的消息作为工作任务，`/聊 内容` 可临时闲聊。授权身份按用户和会话隔离，群成员不共享执行上下文或任务查询权限。
+
+翻唱时在同一条消息附上歌曲音频：
+
+```text
+/唱歌 /片段 30
+/翻唱
+/唱歌 /重编曲
+（从下一行填写歌词，也可附带 UTF-8 .txt 和 .abc 文件）
+```
+
+将歌曲放到 `music/songs/` 后也可以按文件名点歌。仅发送歌名不会自动联网下载歌曲。原曲翻唱保留伴奏和节奏；YuE2 重编曲可能改变编配、速度和时长。
+
+完整命令和交付规则见 [任务工作台](docs/tasks.md)、[唱歌功能](docs/singing.md)。
+
+## 目录结构
+
+```text
+akari_bot.py              QQ 网关、聊天和分发入口
+akari_commands.py        指令解析与授权
+akari_tasks.py           SQLite 任务、会话、发件箱
+akari_worker.py          执行队列、取消、超时、产物收集
+akari_agent.py           Pi JSON 流桥接
+akari_context.mjs        上下文归档、图片与文本预算
+akari_delivery.py        QQ 发送、补发和错误处理
+akari_upload.py          分片上传与进度
+akari_image.py           ComfyUI 图片适配
+akari_video.py           视频生成与媒体适配
+akari_voice.py           TTS 客户端
+akari_music.py            唱歌命令
+akari_sing.py             原曲翻唱 / YuE2 管线
+akari_admin.py           控制台 HTTP API、登录与配置保存
+akari_admin_schema.py    可编辑配置白名单与校验
+akari_runtime.py         Bot 运行状态记录
+admin/                   无构建步骤的中文响应式前端
+music/                   音乐安装脚本、示例配置与本地验证入口
+voice/                   可选 IndexTTS 服务适配器
+scripts/                 配置初始化、服务文件生成
+config.example.json      无凭据的配置模板
+persona.txt              角色提示词
+tests/                  单元、集成与浏览器测试
+```
+
+## 开发与验证
+
+```bash
+python3 -m unittest discover -s tests -v
+node tests/test_context.mjs
+```
+
+发布前在独立检出中验证；测试不发送 QQ 消息。部分集成测试需要 Pi、FFmpeg 和本机 HTTP 监听权限，缺少 Pi 的测试会跳过。模型推理测试、真实 Bot 浏览器验收须显式运行，不属于默认测试。
+
+测试方法、浏览器依赖及扩展方式见 [开发文档](docs/development.md)。
+
+## 数据与维护
+
+- `config.json`、`secrets/`、`state/`、生成音频和模型缓存都被 `.gitignore` 排除。
+- 任务运行目录保留原始指令、附件、日志和产物；备份与迁移时应一起考虑 `state/`。
+- 运行任务时禁止从控制台重启/停止；进程意外退出时，运行任务标记为中断，保留产物供核对，不自动重放外部操作。
+- QQ 的可上传格式、大小、主动消息额度以对应应用的实际响应为准，项目配置阈值不是平台保证。
+- 控制台默认只监听本机，远程使用方式见 [控制台文档](docs/admin.md)。
+
+## 上游与许可
+
+音乐能力使用 [YuE / YuE2](https://github.com/multimodal-art-projection/YuE)、[Seed-VC](https://github.com/Plachtaa/seed-vc) 与 [SheetSage2](https://huggingface.co/m-a-p/SheetSage2)，安装脚本固定了所验证的源码/模型版本。人声分离使用 Demucs，媒体处理使用 FFmpeg。
+
+第三方实现和权重遵守各自许可，未打包进此仓库。音频、参考声音与角色素材由部署者自行准备并确认使用权限。本仓库当前未指定独立开源许可证。

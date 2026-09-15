@@ -1,0 +1,2 @@
+# Only needed by image/video preprocessing. Bot core/admin use stdlib.
+Pillow>=10.0
