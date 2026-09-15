@@ -55,6 +55,27 @@ class RoleTests(unittest.TestCase):
         self.assertNotIn('写进',text);self.assertIn('安排',text)
         self.assertEqual(job['status'],'queued')
 
+    def test_unauthorized_pseudo_tool_and_waiting_claim_are_rejected(self):
+        self.ev['user_openid']='not-authorized'
+        for text in ('我去准备翻唱啦，等唱好了就拿给你听。akari_task: submit', '后台说唱好了会自己发过来，我还在等呢'):
+            reply,job=role.respond([],self.ev,self.cmd,lambda *args:text)
+            self.assertIsNone(job);self.assertIn('没有任务权限',reply)
+            self.assertNotIn('akari_task',reply)
+        self.assertEqual(self.db.list(),[])
+
+    def test_authorized_pseudo_tool_is_repaired_with_native_call(self):
+        call=dict(id='c',function=dict(name='akari_task',arguments=json.dumps(dict(action='submit',request='翻唱恋爱循环',kind='music'))))
+        model=Mock(side_effect=['akari_task: submit, kind=music',{'tool_calls':[call]},'灯里已经安排好啦。'])
+        text,job=role.respond([],self.ev,self.cmd,model)
+        self.assertTrue(job['ok']);self.assertEqual(len(self.db.list()),1)
+        self.assertEqual(model.call_count,3)
+
+    def test_unauthorized_native_call_cannot_become_a_false_acceptance(self):
+        self.ev['user_openid']='not-authorized'
+        call=dict(id='c',function=dict(name='akari_task',arguments=json.dumps(dict(action='submit',request='翻唱'))))
+        text,job=role.respond([],self.ev,self.cmd,Mock(side_effect=[{'tool_calls':[call]},'好的交给我吧！']))
+        self.assertIn('没有任务权限',text);self.assertEqual(self.db.list(),[])
+
     def test_routing_preserves_fast_controls_and_chat_escape(self):
         for text in ('/任务 分析文件','/音乐 写首歌','/翻唱 恋爱循环','就按刚才说的做'):
             self.assertTrue(role.route(dict(self.ev,content=text),self.cmd),text)

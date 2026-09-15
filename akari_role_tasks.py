@@ -84,9 +84,19 @@ def invoke(args, ev, commands):
     return dict(ok=True,id=job['id'],status=job['status'],kind=kind,message='已登记，尚未完成；用角色语气回应实际已安排的事项，不声称作品已经生成。')
 
 
+def unverified_claim(text):
+    return bool(re.search(r'akari_task|后台.{0,20}(?:等|说|处理|执行)|(?:我|灯里).{0,10}(?:去准备|去处理|去生成|去下载|去翻唱|开始执行)|(?:已经|正在).{0,10}(?:安排|登记|排队|执行|生成|翻唱)|等.{0,8}(?:唱好|做好|处理好).{0,10}(?:给|发)|还在等', text, re.I))
+
+
+def not_submitted(ev, commands):
+    if not commands.allowed(ev):
+        return '唔，你当前的 QQ 身份还没有任务权限，这次没有创建任务，也没有在后台执行。需要管理员为这个身份开通权限哦。'
+    return '唔，这次还没有成功登记任务，没有在后台执行。可以重新告诉灯里具体需求，我确认接好后会给你任务号。'
+
+
 def respond(messages, ev, commands, complete):
     """At most two tool rounds and one final dialogue call; no worker runs here."""
-    dialog=list(messages);submitted=None;last_error='';had_tool=False
+    dialog=list(messages);submitted=None;last_error='';had_tool=False;verified_status=False
     for turn in range(3):
         tools=TOOLS if turn<2 else None
         result=complete(dialog,tools)
@@ -95,6 +105,12 @@ def respond(messages, ev, commands, complete):
         calls=result.get('tool_calls') or []
         if not calls:
             text=(result.get('content') or '').strip()
+            if not submitted and not verified_status and (unverified_claim(text) or last_error):
+                if commands.allowed(ev) and not last_error and turn < 1:
+                    dialog.extend([{'role':'assistant','content':text}, {'role':'system','content':
+                        '刚才没有实际工具回执，不能承诺后台正在执行。若用户明确要求执行，请现在用原生 akari_task 工具派发；若仅查询进度，用 status 核验。不要把函数名写成普通文本，不得捏造状态。'}])
+                    continue
+                return not_submitted(ev, commands),None
             if not text and submitted:text='嗯，灯里已经记下并安排好啦！有进展就告诉你哦。'
             if not text and had_tool:text='唔，这次没能安排好：'+last_error[:180]
             if submitted:
@@ -110,6 +126,7 @@ def respond(messages, ev, commands, complete):
                 if call.get('function',{}).get('name') != 'akari_task':raise ValueError('未知任务工具。')
                 outcome=invoke(json.loads(call['function']['arguments']),ev,commands)
                 if outcome.get('ok') and 'id' in outcome:submitted=outcome
+                elif 'id' in outcome and 'status' in outcome:verified_status=True
             except (ValueError,TypeError,KeyError,OSError) as exc:
                 last_error=str(exc);outcome={'ok':False,'error':last_error}
             dialog.append({'role':'tool','tool_call_id':call.get('id',''), 'content':json.dumps(outcome,ensure_ascii=False)})

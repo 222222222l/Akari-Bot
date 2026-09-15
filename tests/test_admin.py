@@ -53,6 +53,25 @@ class AdminTests(FixtureCase):
         self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.app.token_path.stat().st_mode & 0o777, 0o600)
 
+    def test_task_whitelist_add_remove_and_validation(self):
+        self.save({'agent_allowed_openids':['Group-Owner_1','PrivateOwner2']})
+        self.assertEqual(self.app.raw('bot')['agent_allowed_openids'],['Group-Owner_1','PrivateOwner2'])
+        self.save({'agent_allowed_openids':[]})
+        self.assertEqual(self.app.raw('bot')['agent_allowed_openids'],[])
+        for value in ('someone',['昵称'],['a','a'],[''],[1],['x'*129],['a']*101):
+            with self.assertRaises(APIError):self.save({'agent_allowed_openids':value})
+
+    def test_recent_accounts_use_actual_identity_not_nickname_and_hide_messages(self):
+        store=TaskStore(self.base/'state')
+        for uid in ('group-user','private-user','group-user'):
+            ev=dict(scene='group',user_openid=uid,group_openid='group',nick='<same nickname>',key=uid,msg_id=uid,ts=1,content='private message content')
+            store.enqueue(ev,{'kind':'text','text':'private reply'})
+        result=self.app.public_config()
+        self.assertEqual(len(result['accounts']),2)
+        self.assertEqual(result['accounts'][0]['openid'],'group-user')
+        self.assertNotIn('private message content',json.dumps(result))
+        self.assertNotIn('private reply',json.dumps(result))
+
     def test_stale_revision_rejected_without_overwrite(self):
         revision = fingerprint(self.config)
         self.save({'temperature': .6})

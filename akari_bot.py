@@ -698,7 +698,7 @@ def handle_event(ev):
                          '[系统] 对方发了图片但我没能拿到图，请如实说看不到，不要编。'})
     _role_job = None
     with _llm_sem:
-        if akari_role_tasks.enabled(CFG) and COMMANDS.allowed(ev) and not ev.get('role_chat_only'):
+        if akari_role_tasks.enabled(CFG) and not ev.get('role_chat_only'):
             reply, _role_job = akari_role_tasks.respond(msgs, ev, COMMANDS, call_llm)
         else:
             reply = call_llm(msgs)

@@ -90,7 +90,7 @@ class Admin:
                 continue
             result[scope] = dict(available=True, revision=fingerprint(raw), values={
                 f['key']: raw.get(f['key'], f['default']) for f in FIELDS if f['scope'] == scope})
-        return dict(config=result, fields=FIELDS, groups=GROUPS)
+        return dict(config=result, fields=FIELDS, groups=GROUPS, accounts=self.accounts())
 
     def save(self, body):
         scope, patch = body.get('scope'), body.get('changes')
@@ -173,6 +173,22 @@ class Admin:
                 self.sessions.pop(sid, None)
                 raise APIError(401, '登录已过期，请重新登录')
             return sid, session
+
+    def accounts(self):
+        """Recent identities from actual received-message envelopes, never nick matching."""
+        path=self.state/'tasks.sqlite3'
+        if not path.exists():return []
+        with contextlib.closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,timeout=3)) as db:
+            rows=db.execute('SELECT event FROM outbox ORDER BY id DESC LIMIT 300').fetchall()
+        seen=set();items=[]
+        for row in rows:
+            ev=json.loads(row[0]);uid=ev.get('user_openid','')
+            if not isinstance(uid,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}',uid) or uid in seen:continue
+            seen.add(uid)
+            items.append(dict(openid=uid,nick=str(ev.get('nick') or '未记录昵称')[:80],
+                              scene='群聊' if ev.get('scene')=='group' else '私聊',last_seen=ev.get('ts')))
+            if len(items)>=30:break
+        return items
 
     def jobs(self):
         path = self.state / 'tasks.sqlite3'

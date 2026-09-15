@@ -106,6 +106,19 @@ class BotIntegrationTests(unittest.TestCase):
         with self.bot.TASK_STORE.connect() as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM outbox').fetchone()[0],1)
 
+    def test_unauthorized_role_request_gets_truthful_reply_without_task(self):
+        self.bot.CFG['role_task_dispatch']=True
+        seen=[]
+        def model(messages,tools=None):
+            seen.append(tools)
+            return '我去准备翻唱啦！akari_task: submit, kind=music'
+        self.bot.call_llm=model
+        self.bot.handle_event(dict(self.ev('翻唱恋爱循环','denied'),user_openid='unlisted'))
+        self.assertTrue(seen[0]);self.assertEqual(self.bot.TASK_STORE.list(),[])
+        with self.bot.TASK_STORE.connect() as db:
+            text=json.loads(db.execute('SELECT payload FROM outbox').fetchone()[0])['text']
+        self.assertIn('没有任务权限',text);self.assertNotIn('akari_task',text)
+
     def test_gateway_message_key_uses_stable_message_identity(self):
         payload = {'t':'C2C_MESSAGE_CREATE', 'd':{'id':'same-message','author':{'user_openid':'owner'}}}
         a, b = self.bot.build_event(payload), self.bot.build_event(dict(payload, id='delivery-attempt-2'))

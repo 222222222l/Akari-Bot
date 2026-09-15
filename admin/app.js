@@ -56,7 +56,7 @@ async function api(path, body) {
 }
 function showLogin() { state.csrf=''; $('#app').hidden=true; $('#login').hidden=false; $('#access-token').value=''; }
 function showError(error, source='general') { $('#global-error').dataset.source=source; $('#global-error').hidden=false; $('#global-error').textContent=error.message || String(error); }
-function dirty() { if (!state.config) return []; return state.config.fields.filter(f => state.config.config[f.scope].available && state.draft[f.scope][f.key] !== state.config.config[f.scope].values[f.key]); }
+function dirty() { if (!state.config) return []; return state.config.fields.filter(f => state.config.config[f.scope].available && JSON.stringify(state.draft[f.scope][f.key]) !== JSON.stringify(state.config.config[f.scope].values[f.key])); }
 function fieldID(f) { return `field-${f.scope}-${f.key}`; }
 function switchHTML(f) { return `<label class="switch"><input type="checkbox" aria-label="${esc(f.label)}" data-key="${f.key}" data-scope="${f.scope}" ${state.draft[f.scope][f.key] ? 'checked' : ''}><span class="switch-track"></span></label>`; }
 function renderFeatures() {
@@ -98,11 +98,16 @@ function renderSettings() {
     let input;
     if(f.type==='bool') input=switchHTML(f);
     else if(f.type==='select') input=`<select ${attrs}>${f.options.map(([v,l])=>`<option value="${esc(v)}" ${v===value?'selected':''}>${esc(l)}</option>`).join('')}</select>`;
+    else if(f.type==='list') input=`<textarea ${attrs} rows="5" spellcheck="false" placeholder="每行一个 QQ OpenID">${esc(value.join('\n'))}</textarea>`;
     else if(f.type==='text') input=`<textarea ${attrs} minlength="${f.min}" maxlength="${f.max}" required>${esc(value)}</textarea>`;
     else if(f.type==='str') input=`<input ${attrs} type="text" value="${esc(value)}" minlength="${f.min}" maxlength="${f.max}" required>`;
     else input=`<input ${attrs} type="number" value="${esc(value)}" min="${f.min}" max="${f.max}" step="${f.type==='int'?'1':'0.01'}" required>`;
     return `<div class="field">${f.type==='bool'?`<span class="field-label">${esc(f.label)}</span>`:`<label for="${fieldID(f)}">${esc(f.label)}</label>`}${input}<p id="help-${fieldID(f)}">${esc(f.help || (f.type==='bool'?'保存并重启 bot 后生效。':f.scope==='music'?'新任务生效。':f.type==='select'?'选择灯里参与群聊的方式。':`允许范围：${f.min} – ${f.max}${f.type==='str'?' 字符':''}`))}</p>${!state.config.config[f.scope].available?'<p class="field-error">该配置文件不存在，暂不可编辑。</p>':''}</div>`;
   }).join('');
+  if(group.id==='agent') {
+    const ids=state.draft.bot.agent_allowed_openids || [];
+    $('#settings-form').insertAdjacentHTML('beforeend',`<section class="account-list"><h3>近期发言账号</h3><p class="muted">来自最近收到的 QQ 消息。昵称仅供识别，授权按 OpenID；点击后还需保存并重启。</p>${(state.config.accounts || []).map(a=>`<div class="account-row"><div><strong>${esc(a.nick)}</strong><span class="muted"> · ${esc(a.scene)}</span><code>${esc(a.openid)}</code></div><button type="button" class="button secondary" data-account="${esc(a.openid)}">${ids.includes(a.openid)?'移出白名单':'加入白名单'}</button></div>`).join('') || '<p class="muted">暂无记录，可在上方手动填写 OpenID。</p>'}</section>`);
+  }
   $$('#settings-form [data-key]').forEach(el=>el.disabled=!state.config.config[el.dataset.scope].available);
   syncDraft();
 }
@@ -207,7 +212,7 @@ async function save() {
   const fields=dirty();if(!fields.length)return;
   const invalid=fields.find(f=>{
     const v=state.draft[f.scope][f.key];
-    return (f.type==='int' && !Number.isInteger(v)) || (['int','float'].includes(f.type) && (!Number.isFinite(v) || v<f.min || v>f.max)) || (['str','text'].includes(f.type) && (v.length<f.min || v.length>f.max));
+    return (f.type==='list' && (!Array.isArray(v) || v.length>100 || v.some(x=>!/^[-A-Za-z0-9_]{1,128}$/.test(x)))) || (f.type==='int' && !Number.isInteger(v)) || (['int','float'].includes(f.type) && (!Number.isFinite(v) || v<f.min || v>f.max)) || (['str','text'].includes(f.type) && (v.length<f.min || v.length>f.max));
   });
   if(invalid) {location.hash=`settings/${invalid.group}`;notify(`${invalid.label}：请输入范围内的有效值`,true);return;}
   state.saving=true;$('#save').disabled=true;
@@ -253,8 +258,14 @@ $('#login-form').addEventListener('submit',async event=>{
 $('#app').addEventListener('input',event=>{
   const el=event.target;if(!el.dataset.key)return;
   const field=state.config.fields.find(f=>f.scope===el.dataset.scope && f.key===el.dataset.key);
-  state.draft[field.scope][field.key]=el.type==='checkbox'?el.checked:['int','float'].includes(field.type)?(el.value===''?NaN:Number(el.value)):el.value;
+  state.draft[field.scope][field.key]=field.type==='list'?[...new Set(el.value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean))]:el.type==='checkbox'?el.checked:['int','float'].includes(field.type)?(el.value===''?NaN:Number(el.value)):el.value;
   syncDraft();
+});
+$('#settings-form').addEventListener('click',event=>{
+  const button=event.target.closest('[data-account]');if(!button)return;
+  const uid=button.dataset.account,ids=state.draft.bot.agent_allowed_openids || [];
+  state.draft.bot.agent_allowed_openids=ids.includes(uid)?ids.filter(x=>x!==uid):[...ids,uid];
+  renderSettings();
 });
 $('#settings-form').addEventListener('submit',e=>e.preventDefault());
 $('#app').addEventListener('click',event=>{const button=event.target.closest('[data-action]');if(button && !button.disabled)serviceAction(button.dataset.action);});

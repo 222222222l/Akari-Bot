@@ -106,6 +106,7 @@ field('dry_run', '演练模式', 'bool', False, 'connection', help='用于调试
 field('role_task_dispatch', '角色理解与任务派发', 'bool', True, 'agent', help='先由灯里理解请求并用角色语气接待，再调用任务工具执行；进度和取消指令仍直接处理。')
 field('role_task_results', '角色简洁结果回复', 'bool', True, 'agent', help='完成后由灯里简洁说明关键结果，完整报告留在任务中；减少自动进度和重复格式附件。')
 
+field('agent_allowed_openids', '任务下达白名单', 'list', [], 'agent', 0, 100, help='每行一个 QQ 平台 OpenID；昵称和 QQ 号不能代替。群聊与私聊身份可能不同。加入后可执行完整后台任务，保存并重启生效。')
 INDEX = {(f['scope'], f['key']): f for f in FIELDS}
 
 
@@ -120,10 +121,13 @@ def validate(scope, patch, current):
         valid = ((kind == 'bool' and type(value) is bool) or
                  (kind == 'int' and type(value) is int) or
                  (kind == 'float' and type(value) in (int, float) and math.isfinite(value)) or
-                 (kind in ('str', 'text', 'select') and isinstance(value, str)))
+                 (kind in ('str', 'text', 'select') and isinstance(value, str)) or
+                 (kind == 'list' and isinstance(value, list) and all(isinstance(v,str) and re.fullmatch(r'[A-Za-z0-9_-]{1,128}',v) for v in value)))
         if not valid:
             raise ValueError(f['label'] + '：类型不正确')
-        measured = len(value) if isinstance(value, str) else value
+        if kind == 'list' and len(set(value)) != len(value):
+            raise ValueError(f['label'] + '：账号不可重复')
+        measured = len(value) if isinstance(value, (str,list)) else value
         if f['min'] is not None and not f['min'] <= measured <= f['max']:
             raise ValueError(f"{f['label']}：须在 {f['min']} 到 {f['max']} 之间")
         if kind == 'select' and value not in [v[0] for v in f['options']]:
