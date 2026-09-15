@@ -23,7 +23,7 @@ FEATURES = [
     ('image_enabled', '图片生成', '通过 ComfyUI 绘制图片', 'image', 'media'),
     ('video_enabled', '视频生成', '根据图片生成短视频', 'film', 'media'),
     ('voice_enabled', '语音回复', '用灯里的声音说出回复', 'mic', 'voice'),
-    ('music_enabled', '阿卡林翻唱', '原曲翻唱与 YuE2 音乐重编曲', 'music', 'voice'),
+    ('music_enabled', '阿卡林音乐', '原创生成、自动找歌翻唱与重编曲', 'music', 'voice'),
 ]
 for key, label, desc, icon, group in FEATURES:
     field(key, label, 'bool', True, group, help=desc)
@@ -64,6 +64,13 @@ for key, label, default, lo, hi in [
     ('music_timeout', '翻唱任务超时（秒）', 3600, 60, 86400),
 ]:
     field(key, label, 'int', default, 'voice', lo, hi)
+field('music_auto_route', '自然语言音乐任务', 'bool', True, 'voice', help='授权用户的明确音乐创作/翻唱需求自动进入 Pi 任务。')
+field('reference', '默认音色参考文件', 'str', 'songs/三上枝織 - ハイっ!アッカリーン.mp3', 'voice', 1, 2048, '相对于 music/config.json 的路径，或绝对路径；整首歌可自动提取短人声。', scope='music')
+field('reference_extract_vocals', '自动提取参考人声', 'bool', True, 'voice', help='首次分离伴奏、选取有效演唱片段并缓存。', scope='music')
+field('reference_seconds', '参考人声长度（秒）', 'int', 18, 'voice', 5, 25, scope='music')
+field('auto_download', '自动搜索下载歌曲', 'bool', True, 'voice', help='仅获取公开音源，失败时报告原因；新任务生效。', scope='music')
+field('download_timeout', '歌曲获取超时（秒）', 'int', 180, 'voice', 30, 900, scope='music')
+field('download_max_seconds', '允许下载歌曲时长（秒）', 'int', 900, 'voice', 10, 1800, scope='music')
 field('max_seconds', '最长翻唱时长（秒）', 'int', 600, 'voice', 10, 1800, '新翻唱任务生效，无需重启。', scope='music')
 field('diffusion_steps', '音色转换步数', 'int', 40, 'voice', 1, 200, '步数越多，生成时间越长。新任务生效。', scope='music')
 field('memory_budget_gib', '音乐显存预算（GiB）', 'int', 24, 'voice', 8, 80, 'YuE2 推理显存预算，新任务生效。', scope='music')

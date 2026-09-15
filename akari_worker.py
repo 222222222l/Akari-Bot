@@ -247,6 +247,12 @@ class TaskService:
                 '发送超限时用户可用 /适配 任务号 文件序号 每段MiB 分段，或 /下载 获取已配置站点的下载链接。\n'
                 '本条 QQ 附件：' + json.dumps(files, ensure_ascii=False) + '\n'
                 '附件读取情况：' + json.dumps(input_errors, ensure_ascii=False))
+            if self.cfg.get('music_enabled', False):
+                instruction += ('\n【音乐能力】已加载原生 akari_music 工具和默认阿卡林参考音色。'
+                    '歌曲创作无需用户提供源音频：自行写原创歌词、风格、种子并调用 generate。'
+                    '翻唱先核对本条输入文件或本地曲库，找不到时用 search 搜索公开来源，核对歌名/歌手后 cover。'
+                    '不得把歌曲名称、网页描述当作已下载音频；不得只给方案或要求用户手填可自行决定的参数。'
+                    '下载失败可换候选，不能绕过付费/登录/DRM；生成失败如实说明。最终音频由工具登记，勿重复复制登记同一文件。\n')
             prompt = job['prompt'] + instruction
             if job.get('parent'):
                 parent = self.store.get(job['parent'], job['scope'])
@@ -257,6 +263,9 @@ class TaskService:
             atomic_text(directory / 'execution.txt', prompt)
             env = dict(os.environ, AKARI_TASK_DIR=str(directory), AKARI_OUTPUT_DIR=str(directory / 'artifacts'),
                        AKARI_AGENT_FORMAT='json', AKARI_SESSION_DIR=str(self.store.root / 'pi-sessions'))
+            env['AKARI_MUSIC_ONLY'] = '1' if (job.get('operation') or {}).get('kind') == 'music_agent' else '0'
+            env['AKARI_MUSIC_ENABLED'] = '1' if self.cfg.get('music_enabled', False) else '0'
+            env['AKARI_MUSIC_CONFIG'] = str(self.cfg.get('music_config', Path(__file__).parent / 'music/config.json'))
             if self.cfg.get('llm_key_file'):
                 env['AKARI_AGENT_KEY_FILE'] = self.cfg['llm_key_file']
             if self.cfg.get('agent_base'):
@@ -270,7 +279,7 @@ class TaskService:
                     env[value] = str(self.cfg[key])
             command = ['bash', self.cfg.get('agent_script', str(Path(__file__).with_name('agent_run.sh'))),
                        str(directory / 'execution.txt'), job['session_id'], str(job['timeout'])]
-            if job.get('operation'):
+            if job.get('operation') and job['operation'].get('kind') != 'music_agent':
                 if job['operation'].get('kind') == 'sing':
                     env['AKARI_MUSIC_CONFIG'] = str(self.cfg.get('music_config', Path(__file__).parent / 'music' / 'config.json'))
                     command = ['/usr/bin/python3', str(Path(__file__).with_name('akari_sing.py')), json.dumps(job['operation'])]

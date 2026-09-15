@@ -26,7 +26,7 @@ HELP = '''【QQ 工作台】
 /目录 [路径]  查询或设置后续任务工作目录
 /新会话  后续任务使用新的上下文
 /聊 <内容>  工作模式下临时闲聊
-/唱歌、/翻唱 + 歌曲附件  阿卡林音色翻唱；/唱歌 帮助 查看参数
+/音乐 描述需求  自动创作或找歌翻唱；/唱歌 帮助 查看参数
 /画、/动、/说、/表情 等原有功能继续可用
 任务默认最多30分钟；结果保存后可反复查询。'''
 
@@ -79,7 +79,8 @@ class Commands:
             return True
         if command == '/聊' or command in LEGACY:
             return False
-        return self.allowed(ev) and self.store.session(scope_of(ev)).get('mode') == 'work'
+        return self.allowed(ev) and (self.store.session(scope_of(ev)).get('mode') == 'work' or
+                                    (self.cfg.get('music_enabled', False) and self.cfg.get('music_auto_route', True) and akari_music.is_request(text)))
 
     def reply(self, ev, text, job=None):
         self.store.enqueue(ev, {'kind': 'text', 'text': text}, job['id'] if job else None)
@@ -118,6 +119,8 @@ class Commands:
             self.store.refresh(ev)
             if command in akari_music.COMMANDS:
                 akari_music.handle(self, ev, rest)
+            elif self.cfg.get('music_enabled', False) and self.cfg.get('music_auto_route', True) and akari_music.is_request(text):
+                akari_music.handle(self, ev, text, natural=True)
             elif command in self.prefixes():
                 self.submit(ev, rest)
             elif command == '/工作':

@@ -1,20 +1,21 @@
 """Singing command contract. Standard library only; no models in the QQ process."""
 import json
+import re
 from pathlib import Path
 import shlex
 
 ROOT = Path(__file__).resolve().parent / 'music'
-COMMANDS = {'/唱歌', '/翻唱', '/sing'}
-HELP = '''【阿卡林唱歌】
-/唱歌 + 同条消息的歌曲音频：保留旋律和伴奏，换成阿卡林音色
-/唱歌 歌名：翻唱管理员已放入 music/songs 的歌曲
-/唱歌 /片段 30：先试唱前30秒
-/唱歌 /重编曲 /风格 "Japanese, anime rock"
-下一行开始填写歌词；也可附带 UTF-8 歌词 .txt 和旋律 .abc
-重编曲使用 YuE2；没有 .abc 时先自动转谱，音色转换使用阿卡林参考声音。
-/唱歌 状态：检查环境安装情况
-/进度、/取消、/文件、/补发：查询、停止和取回唱歌任务
-仅歌曲名称不会自动搜索或下载原曲。'''
+COMMANDS = {'/唱歌', '/翻唱', '/sing', '/音乐', '/作曲', '/生成音乐'}
+HELP = '【阿卡林音乐】\n/音乐 写一首关于雨后放学的日语动漫歌：Pi 自动写歌词、选风格并生成\n/作曲 一首轻快的原创歌曲：无需提供音频\n/唱歌 帮我翻唱《某首歌》：Pi 自动找歌、选源并执行\n/翻唱 歌名或公开链接：本地曲库优先，缺少时自动搜索下载\n/翻唱 /片段 30 + 附件：保留原伴奏的30秒试听\n/唱歌 /原创 /风格 "Japanese, anime pop"\n下一行提供歌词：直接调用 YuE2 原创生成\n/唱歌 /重编曲 + 歌曲和歌词：沿用旋律重新编曲\n/唱歌 状态：检查安装与默认参考音色\n/进度、/取消、/文件、/补发：追踪、停止与取回音乐任务\n默认音色使用已配置的参考歌曲自动提取人声，无需再次提供。'
+
+
+def is_request(text):
+    text = re.sub(r'^(?:阿卡林|灯里|あかり|akari)[，,、：:\s]*', '', text.strip(), flags=re.I)
+    if text.startswith('/'):
+        return False
+    if re.match(r'^(?:请|帮我|给我|为我|我想听|我想让你)', text):
+        return bool(re.search(r'(?:唱|翻唱|写|创作|生成|作曲).{0,80}(?:歌|曲)|(?:翻唱|作曲)', text))
+    return bool(re.match(r'^(?:唱|写|创作|生成|来)(?:一首|首|一段).{0,80}(?:歌|曲)|^翻唱\s*[^?？]+$', text))
 
 
 def settings(path=None):
@@ -25,6 +26,8 @@ def settings(path=None):
     for key in ('svc_checkpoint', 'svc_model_config'):
         if cfg.get(key):
             cfg[key] = str((path.parent / cfg[key]).absolute())
+    if cfg.get('downloader') and '/' in cfg['downloader']:
+        cfg['downloader'] = str((path.parent / cfg['downloader']).absolute())
     cfg['root'] = str(path.parent)
     return cfg
 
@@ -45,8 +48,8 @@ def parse_request(text):
     i = 0
     while i < len(tokens):
         token = tokens[i]
-        if token == '/重编曲':
-            mode = 'yue'
+        if token in ('/重编曲', '/原创'):
+            mode = 'yue' if token == '/重编曲' else 'generate'
         elif token in ('/风格', '/片段'):
             i += 1
             if i == len(tokens):
@@ -64,9 +67,9 @@ def parse_request(text):
         else:
             names.append(token)
         i += 1
-    if style and mode != 'yue':
-        raise ValueError('/风格 需配合 /重编曲 使用。')
-    if seconds and mode == 'yue':
+    if style and mode not in ('yue', 'generate'):
+        raise ValueError('/风格 需配合 /重编曲 或 /原创 使用。')
+    if seconds and mode in ('yue', 'generate'):
         raise ValueError('/片段 用于原伴奏翻唱；重编曲请提供对应片段的音频和歌词。')
     return dict(kind='sing', mode=mode, song=' '.join(names), lyrics=lyrics.strip(), style=style, seconds=seconds)
 
@@ -83,21 +86,35 @@ def catalog_source(name, root=ROOT):
     return candidates[0].resolve()
 
 
-def handle(commands, ev, rest):
+def handle(commands, ev, rest, natural=False):
     if not commands.cfg.get('music_enabled', True):
-        raise ValueError('唱歌功能已关闭。')
+        raise ValueError('音乐功能已关闭。')
     if rest in ('帮助', 'help') or (not rest and not ev.get('attachments')):
         commands.reply(ev, HELP)
         return
     config_path = commands.cfg.get('music_config', str(ROOT / 'config.json'))
     cfg = settings(config_path)
     if rest == '状态':
-        commands.reply(ev, installation_status(cfg))
+        commands.reply(ev, installation_status(cfg) + '\n默认参考：' + Path(cfg['reference']).name)
+        return
+    timeout = min(int(commands.cfg.get('music_timeout', 3600)), int(commands.cfg.get('agent_max_timeout', 86400)))
+    command = (ev.get('content') or '').split(maxsplit=1)[0]
+    structured = any(flag in rest.split('\n',1)[0] for flag in ('/重编曲','/原创','/片段','/风格'))
+    # Free-form requests go to the actual Pi agent, which has the native music tool.
+    agent = natural or command in ('/音乐','/作曲','/生成音乐') or (
+        command in ('/唱歌','/sing') and rest and not structured and not ev.get('attachments'))
+    if agent:
+        prompt = ('请实际完成以下音乐需求，使用原生 akari_music 工具自行规划并执行。'
+                  '原创自动填写原创歌词与风格；翻唱自动核对歌曲并搜索/下载公开音源。'
+                  '默认使用已配置的阿卡林参考音色，最终交付可播放音频。需求：\n' + rest)
+        commands.submit(ev, '/超时%d %s' % (timeout, prompt), operation=dict(kind='music_agent'))
         return
     operation = parse_request(rest)
-    if operation['song']:
-        catalog_source(operation['song'], cfg['root'])
-    elif not ev.get('attachments'):
-        raise ValueError('请同条消息附上歌曲音频，或填写曲库歌名。')
-    timeout = min(int(commands.cfg.get('music_timeout', 3600)), int(commands.cfg.get('agent_max_timeout', 86400)))
-    commands.submit(ev, '/超时%d 阿卡林翻唱：%s' % (timeout, rest or '本条歌曲附件'), operation=operation)
+    if operation['mode'] == 'generate':
+        if not operation['lyrics']:
+            raise ValueError('/原创 的下一行需要歌词；想自动写词请用 /音乐 描述需求。')
+        if operation['song']:
+            raise ValueError('直接原创不需要歌名输入；用 /音乐 可描述歌曲主题。')
+    elif not operation['song'] and not ev.get('attachments'):
+        raise ValueError('请提供歌名、公开链接或歌曲附件；原创需求可直接使用 /音乐。')
+    commands.submit(ev, '/超时%d 阿卡林音乐：%s' % (timeout, rest or '本条歌曲附件'), operation=operation)

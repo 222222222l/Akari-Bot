@@ -21,7 +21,9 @@ class MusicTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.db = TaskStore(self.root / 'state')
         self.music_config = self.root / 'music.json'
-        shutil.copyfile(Path(__file__).resolve().parents[1] / 'music/config.example.json', self.music_config)
+        fixture = json.loads((Path(__file__).resolve().parents[1] / 'music/config.example.json').read_text())
+        fixture['reference_extract_vocals'] = False
+        self.music_config.write_text(json.dumps(fixture))
         self.cfg = dict(dry_run=False, agent_allowed_openids=['owner'], agent_workdir=str(self.root),
                         music_config=str(self.music_config))
         self.commands = Commands(self.db, self.cfg, lambda msg: None)

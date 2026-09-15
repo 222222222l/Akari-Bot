@@ -49,18 +49,24 @@ def inputs(operation, task, cfg):
     scores = [p for p in files if p.suffix.lower() == '.abc']
     if len(audio_files) > 1 or len(text_files) > 1 or len(scores) > 1:
         raise ValueError('每次请提供一首歌曲、至多一份歌词和一份旋律谱。')
-    if operation.get('song'):
+    if operation.get('mode') == 'generate':
         if audio_files:
-            raise ValueError('请在曲库歌名与歌曲附件之间选择一种输入。')
-        source = catalog_source(operation['song'], cfg['root'])
+            raise ValueError('原创新歌不需要源音频，请移除歌曲附件，或改用翻唱。')
+        source = None
+    elif operation.get('source') or operation.get('song'):
+        if audio_files:
+            raise ValueError('请在歌曲名称/链接与歌曲附件之间选择一种输入。')
+        from akari_music_source import resolve_source
+        source, provenance = resolve_source(operation.get('source') or operation['song'], task, cfg)
+        (task / 'music-source.json').write_text(json.dumps(provenance, ensure_ascii=False, indent=2))
     elif audio_files:
         source = audio_files[0]
     else:
-        raise ValueError('缺少歌曲音频，请使用 /唱歌 并在同条消息附上音频。')
+        raise ValueError('缺少歌曲音频，请提供歌名/公开链接或歌曲附件。')
     lyrics = operation.get('lyrics') or (read_text(text_files[0]) if text_files else '')
     if len(lyrics) > 30000:
         raise ValueError('歌词过长。')
-    if operation['mode'] == 'yue' and not lyrics:
+    if operation['mode'] in ('yue', 'generate') and not lyrics:
         raise ValueError('YuE2 重编曲需要歌词：从命令下一行填写，或附带 UTF-8 .txt 文件。')
     return source, lyrics, scores[0] if scores else None
 
@@ -97,19 +103,27 @@ def align_and_mix(vocal, accompaniment, work, env):
 
 
 def perform(operation, task, output, cfg):
-    if operation.get('kind') != 'sing' or operation.get('mode') not in ('cover', 'yue'):
+    if operation.get('kind') != 'sing' or operation.get('mode') not in ('cover', 'yue', 'generate'):
         raise ValueError('未知唱歌操作。')
+    mode = operation['mode']
     seconds = operation.get('seconds')
-    if seconds is not None and (type(seconds) is not int or not 5 <= seconds <= 120 or operation['mode'] != 'cover'):
+    if seconds is not None and (type(seconds) is not int or not 5 <= seconds <= 120 or mode != 'cover'):
         raise ValueError('无效的试唱片段参数。')
+    seed = operation.get('seed', 42)
+    if type(seed) is not int or not 0 <= seed < 2 ** 32:
+        raise ValueError('随机种子应为0至4294967295的整数。')
+    style = operation.get('style') or cfg['style']
+    if not isinstance(style, str) or not 1 <= len(style) <= 2000:
+        raise ValueError('音乐风格应为1至2000字。')
+    hint = operation.get('duration_hint')
+    if hint is not None and (type(hint) is not int or not 10 <= hint <= 600):
+        raise ValueError('期望时长应为10至600秒；仅作为生成提示，不保证精确时长。')
     source, lyrics, score = inputs(operation, task, cfg)
-    metadata = probe(source)
-    if metadata['duration'] > float(cfg.get('max_seconds', 600)) and seconds is None:
+    metadata = probe(source) if source is not None else None
+    if metadata and metadata['duration'] > float(cfg.get('max_seconds', 600)) and seconds is None:
         raise ValueError('歌曲超过时长上限，请先用 /片段 30 试唱或提供短片段。')
-    reference = Path(cfg['reference'])
-    require_file(reference, '阿卡林参考音频')
-    if not 3 <= probe(reference)['duration'] <= 25:
-        raise ValueError('阿卡林参考音频应为3至25秒的干净独唱/语音。')
+    raw_reference = Path(cfg['reference'])
+    require_file(raw_reference, '阿卡林参考音频')
     require_file(cfg['svc_python'], '歌声转换环境')
     require_file(Path(cfg['svc_repo']) / 'inference.py', 'Seed-VC')
     if bool(cfg.get('svc_checkpoint')) != bool(cfg.get('svc_model_config')):
@@ -117,9 +131,9 @@ def perform(operation, task, output, cfg):
     for key in ('svc_checkpoint', 'svc_model_config'):
         if cfg.get(key):
             require_file(cfg[key], key)
-    if operation['mode'] == 'yue':
+    if mode in ('yue', 'generate'):
         require_file(cfg['yue_python'], 'YuE2环境')
-        if score is None:
+        if mode == 'yue' and score is None:
             require_file(cfg['sheetsage_python'], '转谱环境')
             require_file(Path(cfg['sheetsage_repo']) / 'infer.py', 'SheetSage2')
     work = task / 'music-work'
@@ -131,36 +145,45 @@ def perform(operation, task, output, cfg):
     timings = []
     def run(name, cmd, cwd=None):
         timings.append(run_stage(name, cmd, work, env, cwd))
-    # All music subprocesses share the supervisor's process group: cancellation kills descendants.
     with (Path(cfg['root']) / 'inference.lock').open('a') as lock:
         emit('akari_progress', text='等待音乐推理资源')
         fcntl.flock(lock, fcntl.LOCK_EX)
         run('检查歌声转换 GPU 环境', [cfg['svc_python'], '-c',
             'import torch,demucs; assert torch.cuda.is_available(), "CUDA unavailable"'])
+        from akari_music_reference import prepare_reference
+        reference = prepare_reference(cfg, work, env, run)
         normalized = work / 'source.wav'
-        cmd = ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', source]
-        if seconds:
-            cmd += ['-t', str(seconds)]
-        run('读取歌曲音轨', cmd + ['-map', '0:a:0', '-ar', '44100', '-ac', '2', '-c:a', 'pcm_s16le', normalized])
-        if operation['mode'] == 'yue':
-            if score is None:
-                run('SheetSage2 提取原曲旋律', [cfg['sheetsage_python'], Path(cfg['sheetsage_repo']) / 'infer.py',
-                    normalized, '--output', work / 'score', '--melody-only'], cfg['sheetsage_repo'])
-                score = work / 'score' / 'score.abc'
-            abc = read_text(score)
-            if not abc:
-                raise ValueError('转谱未产生旋律。')
-            request = dict(style=operation.get('style') or cfg['style'], lyrics=lyrics, abc=abc, cot='melody', seed=42)
+        if source is not None:
+            cmd = ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', source]
+            if seconds:
+                cmd += ['-t', str(seconds)]
+            run('读取歌曲音轨', cmd + ['-map', '0:a:0', '-ar', '44100', '-ac', '2', '-c:a', 'pcm_s16le', normalized])
+        if mode in ('yue', 'generate'):
+            request = dict(style=style, lyrics=lyrics, cot='full' if mode == 'generate' else 'melody', seed=seed)
+            if hint:
+                request['style'] += ', a concise song around %d seconds' % hint
+            if mode == 'yue':
+                if score is None:
+                    run('SheetSage2 提取原曲旋律', [cfg['sheetsage_python'], Path(cfg['sheetsage_repo']) / 'infer.py',
+                        normalized, '--output', work / 'score', '--melody-only'], cfg['sheetsage_repo'])
+                    score = work / 'score' / 'score.abc'
+                abc = read_text(score)
+                if not abc:
+                    raise ValueError('转谱未产生旋律。')
+                request['abc'] = abc
+            elif score is not None:
+                request['abc'] = read_text(score)
             request_path = work / 'yue-request.json'
             request_path.write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')
             config_path = work / 'runtime.json'
-            # Only music settings, never the bot credentials.
             config_path.write_text(json.dumps(cfg), encoding='utf-8')
-            run('YuE2 按旋律重新编曲演唱', [cfg['yue_python'], Path(__file__).parent / 'music/yue_generate.py',
-                request_path, config_path, work / 'yue'])
+            run('YuE2 原创音乐生成' if mode == 'generate' else 'YuE2 按旋律重新编曲演唱',
+                [cfg['yue_python'], Path(__file__).parent / 'music/yue_generate.py', request_path, config_path, work / 'yue'])
             normalized = work / 'yue' / 'audio.flac'
             if probe(normalized)['duration'] > float(cfg.get('max_seconds', 600)):
                 raise ValueError('YuE2 生成超过歌曲时长上限。')
+            if mode == 'generate' and (work / 'yue' / 'score.abc').is_file():
+                score = work / 'yue' / 'score.abc'
         run('分离歌曲人声与伴奏', [cfg['svc_python'], '-m', 'demucs', '--two-stems', 'vocals',
             '-n', 'htdemucs', '--float32', '--clip-mode', 'clamp', '-d', 'cuda', '-o', work / 'stems', normalized])
         stems = work / 'stems' / 'htdemucs' / normalized.stem
@@ -179,21 +202,26 @@ def perform(operation, task, output, cfg):
         if len(converted) != 1:
             raise ValueError('歌声转换未生成唯一的人声音频。')
         mixed = align_and_mix(converted[0], accompaniment, work, env)
-        encoded = work / 'akari-cover.mp3'
-        run('导出可播放的翻唱音频', ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', mixed,
+        basename = 'akari-original' if mode == 'generate' else 'akari-cover'
+        encoded = work / (basename + '.mp3')
+        run('导出可播放的音乐音频', ['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', mixed,
             '-c:a', 'libmp3lame', '-b:a', '192k', encoded])
         final_meta = probe(encoded)
-        manifest = dict(operation=operation, source=str(source), source_audio=metadata,
-            reference_sha256=hashlib.sha256(reference.read_bytes()).hexdigest(), output_audio=final_meta,
-            timings=timings, config=cfg)
+        manifest = dict(operation=operation, source=str(source) if source else None, source_audio=metadata,
+            reference_source=str(raw_reference), reference_source_sha256=hashlib.sha256(raw_reference.read_bytes()).hexdigest(),
+            reference=str(reference), reference_sha256=hashlib.sha256(reference.read_bytes()).hexdigest(),
+            output_audio=final_meta, timings=timings, config=cfg)
         (work / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
-        for path in (encoded, mixed):
-            dest = output / path.name
+        output.mkdir(parents=True, exist_ok=True)
+        for path, suffix in ((encoded, '.mp3'), (mixed, '.wav')):
+            dest = output / (basename + suffix)
             shutil.copyfile(path, dest)
             emit('akari_artifact', path=str(dest))
-        if operation['mode'] == 'yue':
+        if mode in ('yue', 'generate') and score is not None:
             shutil.copyfile(score, output / 'melody.abc')
-    label = 'YuE2 重编曲翻唱' if operation['mode'] == 'yue' else '保留原伴奏翻唱'
+        if mode == 'generate':
+            (output / 'lyrics.txt').write_text(lyrics, encoding='utf-8')
+    label = {'generate':'原创新歌', 'yue':'YuE2 重编曲翻唱', 'cover':'保留原伴奏翻唱'}[mode]
     return '阿卡林%s已生成（%.1f秒%s）。MP3 可试听，WAV 保留完整音质。文件已登记；发送情况请用 /进度 查询。' % (
         label, final_meta['duration'], '，试唱片段' if seconds else '')
 

@@ -7,11 +7,15 @@ export HF_HOME="$MUSIC_ROOT/hf-cache"
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-600}"
 export UV_CONCURRENT_DOWNLOADS="${UV_CONCURRENT_DOWNLOADS:-3}"
 MODE="${1:-all}"
-case "$MODE" in all|svc|yue|sheetsage) ;; *) echo 'Usage: bash music/setup.sh [all|svc|yue|sheetsage]' >&2; exit 2;; esac
+case "$MODE" in all|svc|yue|sheetsage|download) ;; *) echo 'Usage: bash music/setup.sh [all|svc|yue|sheetsage|download]' >&2; exit 2;; esac
 command -v uv >/dev/null
 command -v ffmpeg >/dev/null
 command -v ffprobe >/dev/null
 mkdir -p vendor models songs wheels
+if [[ "$MODE" == all || "$MODE" == download ]]; then
+  [[ -x .venv-download/bin/python ]] || uv venv --python 3.12 .venv-download
+  uv pip install --python .venv-download/bin/python 'yt-dlp[default]==2026.08.19'
+fi
 checkout() {
   local repo="$1" destination="$2" revision="$3"
   if [[ ! -d "$destination" ]]; then

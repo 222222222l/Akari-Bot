@@ -75,6 +75,8 @@ def main():
             time.sleep(min(5, remaining))
         cmd = [os.environ.get('AKARI_PI_BIN', 'pi'), '--provider', provider, '--model', model,
                '--mode', 'json', '-p', '-e', str(Path(__file__).with_name('akari_context.mjs'))]
+        if os.environ.get('AKARI_MUSIC_ENABLED') == '1':
+            cmd += ['-e', str(Path(__file__).with_name('akari_music_tools.mjs'))]
         if session:
             cmd += ['--session-id', session]
             if os.environ.get('AKARI_SESSION_DIR'):
